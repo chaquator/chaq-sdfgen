@@ -1,0 +1,6 @@
+[Bb]uild/
+compile_commands.json
+stb_image.h
+stb_image_write.h
+*.swp
+*.swo
