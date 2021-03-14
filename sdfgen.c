@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <omp.h>
@@ -18,19 +19,27 @@ void usage() {
     puts(usage);
 }
 
-void error(const char* str, int print_usage) {
+void error(const char* str, bool print_usage) {
     if (print_usage) usage();
     fprintf(stderr, "Error: %s\n", str);
     exit(-1);
 }
 
-void dump_file(const char* filename, const unsigned char* data, int width, int height, int channels) {
+void dump_file(const char* filename, const unsigned char* data, size_t width, size_t height, size_t channels) {
     FILE* dumpfile;
     if (fopen_s(&dumpfile, filename, "wb")) {
         error("Failed to open dump file.", 0);
     }
     fwrite(data, width * height * channels, 1, dumpfile);
     fclose(dumpfile);
+}
+
+void transform_img_to_onebit(unsigned char* img_in, unsigned char* img_out, size_t width, size_t height, size_t stride,
+                             size_t offset) {
+    for (size_t i = 0; i < width * height; ++i) {
+        bool pixel = img_in[i * stride + offset] > 127;
+        img_out[i] = (unsigned char)pixel;
+    }
 }
 
 int main(int argc, char** argv) {
@@ -67,7 +76,6 @@ int main(int argc, char** argv) {
         } break;
         }
     }
-    printf("Infile: %s\nOutfile: %s\nSpread: %llu\n", infile, outfile, spread);
 
     if (infile == NULL) error("No input file specified.", true);
     if (outfile == NULL) error("No output file specified.", true);
@@ -77,17 +85,21 @@ int main(int argc, char** argv) {
     int h;
     int n;
     int c = 2;
-    unsigned char* data = stbi_load(infile, &w, &h, &n, c);
+    unsigned char* img_original = stbi_load(infile, &w, &h, &n, c);
 
-    if (data == NULL) error("Input file could not be opened.", false);
-
-    printf("Filename: %s\nw: %d, h: %d, channels: %d\n", infile, w, h, n);
+    if (img_original == NULL) error("Input file could not be opened.", false);
 
     // transform image into 1-bit image
-    // feed into sdf function
-    // write out
+    unsigned char* img_onebit = malloc(w * h * sizeof(unsigned char));
 
-    stbi_image_free(data);
+    if (img_onebit == NULL) error("img_onebit malloc failed.", false);
+
+    transform_img_to_onebit(img_original, img_onebit, w, h, c, 1);
+    stbi_image_free(img_original);
+
+    // feed into sdf function
+    free(img_onebit);
+    // write out
 
     return 0;
 }
