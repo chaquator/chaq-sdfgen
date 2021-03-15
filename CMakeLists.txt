@@ -14,3 +14,4 @@ if(OpenMP_FOUND)
 endif()
 
 add_executable(chaq_sdf sdfgen.c df.c)
+add_executable(sdftest sdftest.c df.c)
