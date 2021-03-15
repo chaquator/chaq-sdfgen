@@ -13,4 +13,4 @@ if(OpenMP_FOUND)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 endif()
 
-add_executable(chaq_sdf sdfgen.c)
+add_executable(chaq_sdf sdfgen.c df.c)
