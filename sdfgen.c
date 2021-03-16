@@ -6,33 +6,35 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <omp.h>
+
 #include "df.h"
 #include "view.h"
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "stb/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#include "stb/stb_image_write.h"
 
 // not my best work
-const char* program_name;
+static const char* program_name;
 
-void usage() {
-    const char* usage = "usage: %s -i file -o file [-s n]\n"
-                        "    -i file: input file\n"
-                        "    -o file: output file\n"
-                        "    -s n: spread radius in pixels (default 4)\n";
+static void usage() {
     if (program_name == NULL) program_name = "chaq_sdf";
-    printf(usage, program_name);
+    printf("usage: %s -i file -o file [-s n]\n"
+           "    -i file: input file\n"
+           "    -o file: output file\n"
+           "    -s n: spread radius in pixels (default 4)\n",
+           program_name);
 }
 
-void error(const char* str, bool print_usage) {
+static void error(const char* str, bool print_usage) {
     if (print_usage) usage();
     fprintf(stderr, "Error: %s\n", str);
     exit(-1);
 }
 
-void dump_file(const char* filename, const unsigned char* data, size_t width, size_t height, size_t channels) {
+static void dump_file(const char* filename, const unsigned char* data, size_t width, size_t height, size_t channels) {
     FILE* dumpfile;
     if (fopen_s(&dumpfile, filename, "wb")) {
         error("Failed to open dump file.", 0);
@@ -41,8 +43,8 @@ void dump_file(const char* filename, const unsigned char* data, size_t width, si
     fclose(dumpfile);
 }
 
-void transform_img_to_onebit(const unsigned char* img_in, unsigned char* img_out, size_t width, size_t height,
-                             size_t stride, size_t offset) {
+static void transform_img_to_onebit(const unsigned char* img_in, unsigned char* img_out, size_t width, size_t height,
+                                    size_t stride, size_t offset) {
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < width * height; ++i) {
         bool pixel = img_in[i * stride + offset] > 127;
@@ -100,11 +102,11 @@ int main(int argc, char** argv) {
     if (img_original == NULL) error("Input file could not be opened.", false);
 
     // transform image into 1-bit image
-    unsigned char* img_onebit = malloc(w * h * sizeof(unsigned char));
+    unsigned char* img_onebit = malloc((size_t)(w * h) * sizeof(unsigned char));
 
     if (img_onebit == NULL) error("img_onebit malloc failed.", false);
 
-    transform_img_to_onebit(img_original, img_onebit, w, h, c, 1);
+    transform_img_to_onebit(img_original, img_onebit, (size_t)w, (size_t)h, (size_t)c, 1);
 
     stbi_image_free(img_original);
 

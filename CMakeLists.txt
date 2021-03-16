@@ -4,6 +4,7 @@ project(chaq-sdf)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_BUILD_TYPE Debug)
@@ -16,8 +17,8 @@ endif()
 if (MSVC)
     add_compile_options(/W4 /WX)
 else()
-    add_compile_options(-Wall -Wextra -pedantic -Werror)
+    add_compile_options(-Wall -Wextra -Wpedantic -flto)
 endif()
 
-add_executable(chaq_sdf sdfgen.c df.c)
+add_executable(chaq_sdfgen sdfgen.c df.c)
 add_executable(sdftest sdftest.c df.c)
