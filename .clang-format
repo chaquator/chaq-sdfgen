@@ -5,3 +5,4 @@ ColumnLimit: 120
 IndentCaseLabels: false
 IndentWidth: 4
 PointerAlignment: Left
+AllowShortLoopsOnASingleLine: true

@@ -13,5 +13,11 @@ if(OpenMP_FOUND)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 endif()
 
+if (MSVC)
+    add_compile_options(/W4 /WX)
+else()
+    add_compile_options(-Wall -Wextra -pedantic -Werror)
+endif()
+
 add_executable(chaq_sdf sdfgen.c df.c)
 add_executable(sdftest sdftest.c df.c)
