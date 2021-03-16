@@ -7,7 +7,6 @@
 #include "df.h"
 #include "view.h"
 
-// TODO: write testing function for various tests
 static int test_5(const char* name, float in[5], float expected[5], bool expect_match) {
     size_t v[5] = {0};
     float z[6] = {0};
@@ -46,12 +45,21 @@ int main() {
             test_5("randomish", (float[5]){2.2f, 1.f, 3.6f, 3.5f, 2.7f}, (float[5]){2.f, 1.f, 2.f, 3.5f, 2.7f}, true) +
             // decreasing
             test_5("decreasing", (float[5]){4.4f, 3.3f, 2.2f, 1.1f, 0.f}, (float[5]){4.3f, 3.2f, 2.1f, 1.f, 0.f}, true)
-        // dominated
-        // all infinite
-        // all but one infinite
-        // all 0
+            // dominated
+            + test_5("dominated", (float[5]){10.f, 10.f, 1.f, 10.f, 10.f}, (float[5]){5.f, 2.f, 1.f, 2.f, 5.f}, true) +
+            // all infinite
+            test_5("all infinite", (float[5]){INFINITY, INFINITY, INFINITY, INFINITY, INFINITY},
+                   (float[5]){INFINITY, INFINITY, INFINITY, INFINITY, INFINITY}, true) +
+            // all but one infinite
+            test_5("all but one infinite", (float[5]){0.f, INFINITY, INFINITY, INFINITY, INFINITY},
+                   (float[5]){0.f, 1.f, 4.f, 9.f, 16.f}, true) +
+            // all but one infinite #2
+            test_5("all but one infinite #2", (float[5]){INFINITY, INFINITY, INFINITY, 0.f, INFINITY},
+                   (float[5]){9.f, 4.f, 1.f, 0.f, 1.f}, true) +
+            // all 0
+            test_5("all zero", (float[5]){0.f, 0.f, 0.f, 0.f, 0.f}, (float[5]){0.f, 0.f, 0.f, 0.f, 0.f}, true)
 
-        < 3) {
+        < 8) {
         puts("THERE WAS A FAILURE.");
     } else {
         puts("all clear");
