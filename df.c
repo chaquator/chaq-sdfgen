@@ -21,16 +21,16 @@ float parabola_intersect(struct view_f f, size_t p, size_t q) {
 //      http://cs.brown.edu/people/pfelzens/dt/
 // f -- single row buffer of parabola heights, sized N
 // v -- vertices buffer, sized N
-// z -- intersections buffer, sized N
+// z -- break point buffer, associates z[n] with v[n]'s right bound, sized N-1
 void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struct test_results* test) {
     assert((f.end - f.start) > 0);
     assert((v.end - v.start) > 0);
     assert((z.end - z.start) > 0);
     assert((v.end - v.start) == (f.end - f.start));
-    assert((z.end - z.start) == (f.end - f.start));
+    assert((z.end - z.start) == (f.end - f.start) - 1);
 
     // Single-cell is already complete
-    if ((f.end - f.start) == 1) return;
+    if ((f.end - f.start) <= 1) return;
 
     // Part 1: Compute lower envelope as a set of break points and vertices
     // Start at the first non-infinity parabola
@@ -40,35 +40,36 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struc
     // If lower envelope is all at infinity, we have an empty row, this is complete as far as we care
     if (offset == (size_t)(f.end - f.start)) return;
 
+    // First vertex is that of the first parabola
     v.start[0] = offset;
-    z.start[0] = -INFINITY;
-    // z.start[1] = INFINITY;
 
-    // TODO: maybe consider chanigng this to size_t once finished testing
-    ptrdiff_t k = 0;
+    size_t k = 0;
     for (size_t q = offset + 1; q < (size_t)(f.end - f.start); ++q) {
+        // Skip parabolas at infinite heights (essentially non-existant parabolas)
         if (isinf(f.start[q])) continue;
+
         // Calculate intersection of current parabola and next candidate
         float s = parabola_intersect(f, v.start[k], q);
 
-        // If this intersection comes before current left-bound, we must back up and change the necessary break point
-        while (s <= z.start[k]) {
+        // If this intersection comes before current left bound, we must back up and change the necessary break point
+        // Skip for k == 0 because there is no left bound to look back on (it is at -infinity)
+        while (k > 0 && s <= z.start[k - 1]) {
             --k;
-            assert(k >= 0);
             s = parabola_intersect(f, v.start[k], q);
         }
         // Once we found a suitable break point, update the structure
-        ++k;
-        v.start[k] = q;
+        // Right bound of current parabola is intersection
         z.start[k] = s;
-        // z.start[k + 1] = INFINITY;
+        ++k;
+        // Horizontal position of next parabola is vertex
+        v.start[k] = q;
     }
 
     // Part 2: Populate f using lower envelope
     size_t j = 0;
     for (ptrdiff_t q = 0; q < (f.end - f.start); ++q) {
-        // Seek break-point past q
-        while ((ptrdiff_t)j < k && z.start[j + 1] < (float)q) ++j;
+        // Seek break point past q
+        while (j < k && z.start[j] < (float)q) ++j;
         // Set point at f to parabola (originating at v[j])
         size_t v_k = v.start[j];
         float displacement = (float)q - (float)v_k;
@@ -78,9 +79,3 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struc
     test->k = k;
     test->j = j;
 }
-
-// TODO: optimize out the N+1 to N
-// Not only does the highest right bound being set to infinity not matter if you keep track of the # of hulls
-// But I don't think the lowest left bound being -infinity is necessary either if you move some stuff out
-
-// Observation: j is never more than k by the end of iterations. We can use k as a stop condition and not store a +1

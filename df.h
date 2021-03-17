@@ -7,7 +7,7 @@
 
 // results to get back from test
 struct test_results {
-    ptrdiff_t k;
+    size_t k;
     size_t j;
 };
 
