@@ -28,27 +28,37 @@ static void usage() {
            program_name);
 }
 
-static void error(const char* str, bool print_usage) {
+static void error(bool print_usage, const char* str, ...) {
     if (print_usage) usage();
-    fprintf(stderr, "Error: %s\n", str);
+    va_list args;
+    va_start(args, str);
+    vfprintf(stderr, str, args);
     exit(-1);
 }
 
-static void dump_file(const char* filename, const unsigned char* data, size_t width, size_t height, size_t channels) {
+static void dump_to_file(const char* filename, const void* data, size_t size) {
     FILE* dumpfile;
     if (fopen_s(&dumpfile, filename, "wb")) {
-        error("Failed to open dump file.", 0);
+        error(false, "Failed to open dump file.");
     }
-    fwrite(data, width * height * channels, 1, dumpfile);
+    if (fwrite(data, size, 1, dumpfile) < 1) error(false, "Failed to dump file %s.", filename);
     fclose(dumpfile);
 }
 
-static void transform_img_to_onebit(const unsigned char* img_in, unsigned char* img_out, size_t width, size_t height,
-                                    size_t stride, size_t offset) {
+static void transform_img_to_bool(const unsigned char* img_in, bool* bool_out, size_t width, size_t height,
+                                  size_t stride, size_t offset) {
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < width * height; ++i) {
         bool pixel = img_in[i * stride + offset] > 127;
-        img_out[i] = (unsigned char)pixel;
+        bool_out[i] = pixel;
+    }
+}
+
+static void transform_bool_to_float(const bool* bool_in, float* float_out, size_t width, size_t height,
+                                    bool true_is_zero) {
+#pragma omp parallel for simd schedule(static)
+    for (size_t i = 0; i < width * height; ++i) {
+        float_out[i] = bool_in[i] == true_is_zero ? 0.f : INFINITY;
     }
 }
 
@@ -67,30 +77,30 @@ int main(int argc, char** argv) {
         case 'i': {
             ++i;
             if (i >= argc) {
-                error("No input file specified.", true);
+                error(true, "No input file specified.");
             }
             infile = argv[i];
         } break;
         case 'o': {
             ++i;
             if (i >= argc) {
-                error("No output file specified.", true);
+                error(true, "No output file specified.");
             }
             outfile = argv[i];
         } break;
         case 's': {
             ++i;
             if (i >= argc) {
-                error("No number specified with spread.", true);
+                error(true, "No number specified with spread.");
             }
             spread = strtoull(argv[i], NULL, 10);
         } break;
         }
     }
 
-    if (!spread) error("Invalid value given for spread. Must be a positive integer.", true);
-    if (infile == NULL) error("No input file specified.", true);
-    if (outfile == NULL) error("No output file specified.", true);
+    if (!spread) error(true, "Invalid value given for spread. Must be a positive integer.");
+    if (infile == NULL) error(true, "No input file specified.");
+    if (outfile == NULL) error(true, "No output file specified.");
 
     // 2 channels sufficient to get alpha data of image
     int w;
@@ -99,19 +109,34 @@ int main(int argc, char** argv) {
     int c = 2;
     unsigned char* img_original = stbi_load(infile, &w, &h, &n, c);
 
-    if (img_original == NULL) error("Input file could not be opened.", false);
+    if (img_original == NULL) error(false, "Input file could not be opened.");
 
-    // transform image into 1-bit image
-    unsigned char* img_onebit = malloc((size_t)(w * h) * sizeof(unsigned char));
+    // transform image into bool image
+    bool* img_bool = malloc((size_t)(w * h) * sizeof(bool));
+    if (img_bool == NULL) error(false, "img_bool malloc failed.");
 
-    if (img_onebit == NULL) error("img_onebit malloc failed.", false);
-
-    transform_img_to_onebit(img_original, img_onebit, (size_t)w, (size_t)h, (size_t)c, 1);
+    transform_img_to_bool(img_original, img_bool, (size_t)w, (size_t)h, (size_t)c, 1);
 
     stbi_image_free(img_original);
 
-    // feed into sdf function
-    free(img_onebit);
+    // cmpute 2d sdf image
+    float* img_float_inside = malloc((size_t)(w * h) * sizeof(float));
+    if (img_float_inside == NULL) error(false, "img_float_inside malloc failed.");
+
+    transform_bool_to_float(img_bool, img_float_inside, (size_t)w, (size_t)h, true);
+
+    /*
+    float* img_float_outside = malloc((size_t)(w * h) * sizeof(float));
+    if (img_float_outside == NULL) error(false, "img_float_outside malloc failed.");
+
+    transform_bool_to_float(img_bool, img_float_outside, (size_t)w, (size_t)h, false);
+    */
+
+    free(img_bool);
+
+    // Split into rows, feed into
+    free(img_float_inside);
+    // free(img_float_outside);
     // write out
 
     return 0;

@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdlib.h>
 
 // intersection of 2 parabolas, not defined if both parabolas have vertex y's at infinity
 float parabola_intersect(struct view_f f, size_t p, size_t q) {
@@ -22,7 +23,7 @@ float parabola_intersect(struct view_f f, size_t p, size_t q) {
 // f -- single row buffer of parabola heights, sized N
 // v -- vertices buffer, sized N
 // z -- break point buffer, associates z[n] with v[n]'s right bound, sized N-1
-void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struct test_results* test) {
+void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
     assert((f.end - f.start) > 0);
     assert((v.end - v.start) > 0);
     assert((z.end - z.start) > 0);
@@ -75,7 +76,30 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struc
         float displacement = (float)q - (float)v_k;
         f.start[q] = displacement * displacement + f.start[v_k];
     }
+}
 
-    test->k = k;
-    test->j = j;
+void dist_transform_2d(float* img, size_t w, size_t h) {
+    // allocate auxiliary memory
+    size_t dim = w > h ? w : h;
+    size_t other_dim = w > h ? h : w;
+    // (high_dim-1)*(low_dim) is sufficient memory for both orientations
+    // given that the requirement for z per row is N-1
+    float* z_2d = malloc((dim - 1) * other_dim * sizeof(float));
+    size_t* v_2d = malloc(dim * dim * sizeof(size_t));
+
+    // compute 1d for all rows
+    for (size_t y = 0; y < h; ++y) {
+        // partition img, z, and v into views and pass into dist transform
+    }
+
+    // transpose
+    // ow my cache locality
+
+    // compute 1d for all rows (now for all columns)
+    for (size_t x = 0; x < w; ++x) {
+        // do the thing
+    }
+
+    // tranpose
+    // yeah one more why not
 }
