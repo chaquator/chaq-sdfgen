@@ -9,11 +9,11 @@
 
 static int test_5(const char* name, float in[5], float expected[5], bool expect_match) {
     size_t v[5] = {0};
-    float z[6] = {0};
+    float z[5] = {0};
     float out[5] = {0};
     struct test_results results = {.k = 0, .j = 0};
     assert(!memcpy_s(out, 5 * sizeof(float), in, 5 * sizeof(float)));
-    dist_transform_1d((struct view_f){out, out + 5}, (struct view_st){v, v + 5}, (struct view_f){z, z + 6}, &results);
+    dist_transform_1d((struct view_f){out, out + 5}, (struct view_st){v, v + 5}, (struct view_f){z, z + 5}, &results);
 
     int cmp = memcmp(out, expected, 5 * sizeof(float));
     bool match = cmp == 0;
@@ -57,9 +57,12 @@ int main() {
             test_5("all but one infinite #2", (float[5]){INFINITY, INFINITY, INFINITY, 0.f, INFINITY},
                    (float[5]){9.f, 4.f, 1.f, 0.f, 1.f}, true) +
             // all 0
-            test_5("all zero", (float[5]){0.f, 0.f, 0.f, 0.f, 0.f}, (float[5]){0.f, 0.f, 0.f, 0.f, 0.f}, true)
+            test_5("all zero", (float[5]){0.f, 0.f, 0.f, 0.f, 0.f}, (float[5]){0.f, 0.f, 0.f, 0.f, 0.f}, true) +
+            // pixel-like (some infinite, some 0)
+            test_5("pixel-like", (float[5]){INFINITY, 0.f, INFINITY, INFINITY, 0.f},
+                   (float[5]){1.f, 0.f, 1.f, 1.f, 0.f}, true)
 
-        < 8) {
+        < 9) {
         puts("THERE WAS A FAILURE.");
     } else {
         puts("all clear");

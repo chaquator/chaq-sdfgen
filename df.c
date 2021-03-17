@@ -21,13 +21,13 @@ float parabola_intersect(struct view_f f, size_t p, size_t q) {
 //      http://cs.brown.edu/people/pfelzens/dt/
 // f -- single row buffer of parabola heights, sized N
 // v -- vertices buffer, sized N
-// z -- intersections buffer, sized N+1
+// z -- intersections buffer, sized N
 void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struct test_results* test) {
     assert((f.end - f.start) > 0);
     assert((v.end - v.start) > 0);
     assert((z.end - z.start) > 0);
     assert((v.end - v.start) == (f.end - f.start));
-    assert((z.end - z.start) == (f.end - f.start) + 1);
+    assert((z.end - z.start) == (f.end - f.start));
 
     // Single-cell is already complete
     if ((f.end - f.start) == 1) return;
@@ -42,7 +42,7 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struc
 
     v.start[0] = offset;
     z.start[0] = -INFINITY;
-    z.start[1] = INFINITY;
+    // z.start[1] = INFINITY;
 
     // TODO: maybe consider chanigng this to size_t once finished testing
     ptrdiff_t k = 0;
@@ -61,14 +61,14 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struc
         ++k;
         v.start[k] = q;
         z.start[k] = s;
-        z.start[k + 1] = INFINITY;
+        // z.start[k + 1] = INFINITY;
     }
 
     // Part 2: Populate f using lower envelope
     size_t j = 0;
     for (ptrdiff_t q = 0; q < (f.end - f.start); ++q) {
         // Seek break-point past q
-        while (z.start[j + 1] < (float)q) ++j;
+        while ((ptrdiff_t)j < k && z.start[j + 1] < (float)q) ++j;
         // Set point at f to parabola (originating at v[j])
         size_t v_k = v.start[j];
         float displacement = (float)q - (float)v_k;
@@ -82,3 +82,5 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z, struc
 // TODO: optimize out the N+1 to N
 // Not only does the highest right bound being set to infinity not matter if you keep track of the # of hulls
 // But I don't think the lowest left bound being -infinity is necessary either if you move some stuff out
+
+// Observation: j is never more than k by the end of iterations. We can use k as a stop condition and not store a +1
