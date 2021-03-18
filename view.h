@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 
+// start is inculsve lower-bound
+// end is exclusive upper-bound
+
 // view of a float buffer
 struct view_f {
     float* start;

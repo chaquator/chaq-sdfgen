@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 // intersection of 2 parabolas, not defined if both parabolas have vertex y's at infinity
 float parabola_intersect(struct view_f f, size_t p, size_t q) {
@@ -78,6 +79,31 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
     }
 }
 
+// compute distance transform along x-axis of image using buffers passed in
+// img must be at least w*h floats large
+// z_2d must be at least (hi-1)*(low) floats large, where hi = max(w,h) and low = min(w,h)
+// v_2d must be at least hi*hi size_ts large, where hi = max(w,h)
+void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t h) {
+    for (size_t y = 0; y < h; ++y) {
+        // partition img, z, and v into views and pass into dist transform
+        struct view_f f = {.start = img + (y * w), .end = img + ((y + 1) * w)};
+        struct view_st v = {.start = v_2d + (y * w), .end = v_2d + ((y + 1) * w)};
+        struct view_f z = {.start = z_2d + (y * w), .end = z_2d + ((y + 1) * (w - 1))};
+        dist_transform_1d(f, v, z);
+    }
+}
+
+// copy transpose of src to dest, creates a dest that is h x w, where src is w x h
+// w -- width dimension of src
+// h -- height dimension of src
+void transpose_cpy(float* dest, float* src, size_t w, size_t h) {
+    for (size_t y = 0; y < h; ++y) {
+        for (size_t x = 0; x < w; ++x) {
+            dest[w * x + y] = src[y * h + x];
+        }
+    }
+}
+
 void dist_transform_2d(float* img, size_t w, size_t h) {
     // allocate auxiliary memory
     size_t dim = w > h ? w : h;
@@ -88,18 +114,16 @@ void dist_transform_2d(float* img, size_t w, size_t h) {
     size_t* v_2d = malloc(dim * dim * sizeof(size_t));
 
     // compute 1d for all rows
-    for (size_t y = 0; y < h; ++y) {
-        // partition img, z, and v into views and pass into dist transform
-    }
+    dist_transform_axis(img, z_2d, v_2d, w, h);
 
     // transpose
-    // ow my cache locality
+    float* img_tpose = malloc(w * h * sizeof(float));
+    transpose_cpy(img_tpose, img, w, h);
 
     // compute 1d for all rows (now for all columns)
-    for (size_t x = 0; x < w; ++x) {
-        // do the thing
-    }
+    dist_transform_axis(img_tpose, z_2d, v_2d, h, w);
 
-    // tranpose
-    // yeah one more why not
+    // tranpose back
+    transpose_cpy(img, img_tpose, h, w);
+    free(img_tpose);
 }
