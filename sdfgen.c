@@ -22,19 +22,24 @@ static const char* program_name;
 
 static void usage() {
     if (program_name == NULL) program_name = "chaq_sdf";
-    printf("usage: %s -i file -o file [-s n] [-h]\n"
+    printf("usage: %s -i file -o file [-s n] [-ahln]\n"
            "    -i file: input file\n"
            "    -o file: output file\n"
            "    -s n: spread radius in pixels (default 4)\n"
-           "    -h: show the usage\n",
+           "    -a: asymmetric spread (disregard negative distances, becomes unsinged distance transformation)\n"
+           "        (default: symmetric)\n"
+           "    -h: show the usage\n"
+           "    -l: test pixel based on image luminance (default: tests based on alpha channel)\n"
+           "    -n: invert alpha test; values below threshold will be counted as \"inside\" (default: not inverted),\n",
            program_name);
 }
 
 // transforms input image data into boolean buffer
 static void transform_img_to_bool(const unsigned char* img_in, bool* bool_out, size_t width, size_t height,
-                                  size_t stride, size_t offset) {
+                                  size_t stride, size_t offset, bool test_above) {
     for (size_t i = 0; i < width * height; ++i) {
-        bool pixel = img_in[i * stride + offset] < 127;
+        unsigned char threshold = 127;
+        bool pixel = test_above ? img_in[i * stride + offset] > threshold : img_in[i * stride + offset] < threshold;
         bool_out[i] = pixel;
     }
 }
@@ -48,11 +53,12 @@ static void transform_bool_to_float(const bool* bool_in, float* float_out, size_
 }
 
 // single-channel char array output of input floats
-static void transform_float_to_byte(const float* float_in, unsigned char* byte_out, size_t width, size_t height) {
+static void transform_float_to_byte(const float* float_in, unsigned char* byte_out, size_t width, size_t height,
+                                    size_t spread, bool asymmetric) {
     for (size_t i = 0; i < width * height; ++i) {
         // clamped linear remap
-        float s_min = 0.f;
-        float s_max = 100.f;
+        float s_min = asymmetric ? 0 : -(float)spread;
+        float s_max = (float)spread;
         float d_min = 0.f;
         float d_max = 255.f;
 
@@ -71,6 +77,10 @@ static void transform_float_to_byte(const float* float_in, unsigned char* byte_o
 int main(int argc, char** argv) {
     char* infile = NULL;
     char* outfile = NULL;
+
+    size_t test_channel = 1;
+    bool test_above = true;
+    bool asymmetric = false;
     size_t spread = 4;
 
     program_name = argv[0];
@@ -80,6 +90,7 @@ int main(int argc, char** argv) {
         if (argv[i][0] != '-') continue;
 
         switch (argv[i][1]) {
+            // i - input file
         case 'i': {
             ++i;
             if (i >= argc) {
@@ -88,6 +99,7 @@ int main(int argc, char** argv) {
             }
             infile = argv[i];
         } break;
+            // o - output file
         case 'o': {
             ++i;
             if (i >= argc) {
@@ -96,6 +108,7 @@ int main(int argc, char** argv) {
             }
             outfile = argv[i];
         } break;
+            // s - spread parameter
         case 's': {
             ++i;
             if (i >= argc) {
@@ -104,9 +117,32 @@ int main(int argc, char** argv) {
             }
             spread = strtoull(argv[i], NULL, 10);
         } break;
-        case 'h': {
-            usage();
-            return 0;
+            // flags
+        default: {
+            size_t j = 1;
+            while (argv[i][j]) {
+                switch (argv[i][j]) {
+                    // h - help
+                case 'h': {
+                    usage();
+                    return 0;
+                }
+                    // n - invert (test for below threshold instead of above)
+                case 'n': {
+                    test_above = false;
+                } break;
+                    // l - test based on luminance
+                case 'l': {
+                    test_channel = 0;
+                } break;
+                    // a - asymmetric spread
+                case 'a': {
+                    asymmetric = true;
+                } break;
+                }
+                ++j;
+            }
+
         } break;
         }
     }
@@ -137,8 +173,8 @@ int main(int argc, char** argv) {
     bool* img_bool = malloc((size_t)(w * h) * sizeof(bool));
     if (img_bool == NULL) error("img_bool malloc failed.");
 
-    // transform_img_to_bool(img_original, img_bool, (size_t)w, (size_t)h, (size_t)c, 1);
-    transform_img_to_bool(img_original, img_bool, (size_t)w, (size_t)h, (size_t)c, 0);
+    transform_img_to_bool(img_original, img_bool, (size_t)w, (size_t)h, (size_t)c * sizeof(unsigned char), test_channel,
+                          test_above);
     stbi_write_png("god.png", w, h, 1, img_bool, w * (int)sizeof(bool));
 
     stbi_image_free(img_original);
@@ -153,7 +189,7 @@ int main(int argc, char** argv) {
 
     unsigned char* img_byte = malloc((size_t)(w * h) * sizeof(unsigned char));
     if (img_byte == NULL) error("img_byte malloc failed.");
-    transform_float_to_byte(img_float_inside, img_byte, (size_t)w, (size_t)h);
+    transform_float_to_byte(img_float_inside, img_byte, (size_t)w, (size_t)h, spread, asymmetric);
 
     free(img_bool);
     free(img_float_inside);
@@ -165,8 +201,6 @@ int main(int argc, char** argv) {
 }
 
 // TODO:
-// - implement option for generating sdf based on alpha or on luminence
-// - implement option for inverting alpha test
 // - compute 2d sdf for "outside" pixels
 // - consolidate inside vs outside into single float buffer
 // - openMP the whole thing

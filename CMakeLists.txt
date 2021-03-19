@@ -21,4 +21,3 @@ else()
 endif()
 
 add_executable(chaq_sdfgen sdfgen.c df.c utils.c)
-# add_executable(sdftest sdftest.c df.c)

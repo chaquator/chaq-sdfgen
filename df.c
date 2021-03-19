@@ -64,6 +64,7 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
         // Right bound of current parabola is intersection
         z.start[k] = s;
         ++k;
+        assert((ptrdiff_t)k < (v.end - v.start));
         // Horizontal position of next parabola is vertex
         v.start[k] = q;
     }
@@ -74,22 +75,22 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
         // Seek break point past q
         while (j < k && z.start[j] < (float)q) ++j;
         // Set point at f to parabola (originating at v[j])
-        size_t v_k = v.start[j];
-        float displacement = (float)q - (float)v_k;
-        f.start[q] = displacement * displacement + f.start[v_k];
+        size_t v_j = v.start[j];
+        float displacement = (float)q - (float)v_j;
+        f.start[q] = displacement * displacement + f.start[v_j];
     }
 }
 
 // compute distance transform along x-axis of image using buffers passed in
 // img must be at least w*h floats large
 // z_2d must be at least (hi-1)*(low) floats large, where hi = max(w,h) and low = min(w,h)
-// v_2d must be at least hi*hi size_ts large, where hi = max(w,h)
+// v_2d must be at least w*h size_ts large
 void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t h) {
     for (size_t y = 0; y < h; ++y) {
         // partition img, z, and v into views and pass into dist transform
         struct view_f f = {.start = img + (y * w), .end = img + ((y + 1) * w)};
         struct view_st v = {.start = v_2d + (y * w), .end = v_2d + ((y + 1) * w)};
-        struct view_f z = {.start = z_2d + (y * w), .end = z_2d + (((y + 1) * w) - 1)};
+        struct view_f z = {.start = z_2d + (y * (w - 1)), .end = z_2d + ((y + 1) * (w - 1))};
         dist_transform_1d(f, v, z);
     }
 }
@@ -119,8 +120,8 @@ void dist_transform_2d(float* img, size_t w, size_t h) {
     size_t other_dim = w > h ? h : w;
     // (high_dim-1)*(low_dim) is sufficient memory for both orientations
     // given that the requirement for z per row is N-1
-    float* z_2d = malloc((dim - 1) * other_dim * sizeof(float));
-    size_t* v_2d = malloc(dim * dim * sizeof(size_t));
+    float* z_2d = malloc((dim)*other_dim * sizeof(float));
+    size_t* v_2d = malloc(w * h * sizeof(size_t));
 
     // compute 1d for all rows
     dist_transform_axis(img, z_2d, v_2d, w, h);
@@ -136,5 +137,7 @@ void dist_transform_2d(float* img, size_t w, size_t h) {
     // i miss C++ templates
     transpose_cpy_sqrt(img, img_tpose, h, w);
 
+    free(z_2d);
+    free(v_2d);
     free(img_tpose);
 }
