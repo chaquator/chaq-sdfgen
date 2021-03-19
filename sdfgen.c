@@ -71,6 +71,15 @@ static void transform_float_to_byte(const float* float_in, unsigned char* byte_o
     }
 }
 
+static void transform_float_sub(float* float_dst, float* float_by, size_t width, size_t height) {
+    for (size_t i = 0; i < width * height; ++i) {
+        // TODO: consider adding a -1 bias to float_by here
+        // justification: single-pixel lines will have distance-to-outside value of 1
+        // which will reduce contrast, there needs to be some 0 value somewhere
+        float_dst[i] -= float_by[i];
+    }
+}
+
 int main(int argc, char** argv) {
     char* infile = NULL;
     char* outfile = NULL;
@@ -171,14 +180,25 @@ int main(int argc, char** argv) {
 
     stbi_image_free(img_original);
 
-    // compute 2d sdf image
+    // compute 2d sdf images
+    // inside -- pixel distance to INSIDE
+    // outside -- pixel distance to OUTSIDE
     float* img_float_inside = malloc((size_t)(w * h) * sizeof(float));
     if (img_float_inside == NULL) error("img_float_inside malloc failed.");
+    float* img_float_outside = malloc((size_t)(w * h) * sizeof(float));
+    if (img_float_outside == NULL) error("img_float_outside malloc failed.");
 
     transform_bool_to_float(img_bool, img_float_inside, (size_t)w, (size_t)h, true);
-
     dist_transform_2d(img_float_inside, (size_t)w, (size_t)h);
 
+    transform_bool_to_float(img_bool, img_float_outside, (size_t)w, (size_t)h, false);
+    dist_transform_2d(img_float_outside, (size_t)w, (size_t)h);
+
+    // consolidate in the form of (inside - outside) to img_float_inside
+    transform_float_sub(img_float_inside, img_float_outside, (size_t)w, (size_t)h);
+    free(img_float_outside);
+
+    // transform distance values to pixel values
     unsigned char* img_byte = malloc((size_t)(w * h) * sizeof(unsigned char));
     if (img_byte == NULL) error("img_byte malloc failed.");
     transform_float_to_byte(img_float_inside, img_byte, (size_t)w, (size_t)h, spread, asymmetric);
@@ -186,6 +206,7 @@ int main(int argc, char** argv) {
     free(img_bool);
     free(img_float_inside);
 
+    // output image
     stbi_write_png(outfile, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
     free(img_byte);
 
