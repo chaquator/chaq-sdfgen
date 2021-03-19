@@ -27,7 +27,7 @@ static void usage() {
         "        (default: symmetric)\n"
         "    -h: show the usage\n"
         "    -l: test pixel based on image luminance (default: tests based on alpha channel)\n"
-        "    -n: invert alpha test; values below threshold will be counted as \"inside\" (default: not inverted),\n";
+        "    -n: invert alpha test; values below threshold will be counted as \"inside\" (default: not inverted)";
     puts(usage);
 }
 
@@ -87,8 +87,7 @@ int main(int argc, char** argv) {
         switch (argv[i][1]) {
             // i - input file
         case 'i': {
-            ++i;
-            if (i >= argc) {
+            if (++i >= argc) {
                 usage();
                 error("No input file specified.");
             }
@@ -96,8 +95,7 @@ int main(int argc, char** argv) {
         } break;
             // o - output file
         case 'o': {
-            ++i;
-            if (i >= argc) {
+            if (++i >= argc) {
                 usage();
                 error("No output file specified.");
             }
@@ -105,8 +103,7 @@ int main(int argc, char** argv) {
         } break;
             // s - spread parameter
         case 's': {
-            ++i;
-            if (i >= argc) {
+            if (++i >= argc) {
                 usage();
                 error("No number specified with spread.");
             }
