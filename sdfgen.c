@@ -17,21 +17,18 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb/stb_image_write.h"
 
-// not my best work
-static const char* program_name;
-
 static void usage() {
-    if (program_name == NULL) program_name = "chaq_sdf";
-    printf("usage: %s -i file -o file [-s n] [-ahln]\n"
-           "    -i file: input file\n"
-           "    -o file: output file\n"
-           "    -s n: spread radius in pixels (default 4)\n"
-           "    -a: asymmetric spread (disregard negative distances, becomes unsinged distance transformation)\n"
-           "        (default: symmetric)\n"
-           "    -h: show the usage\n"
-           "    -l: test pixel based on image luminance (default: tests based on alpha channel)\n"
-           "    -n: invert alpha test; values below threshold will be counted as \"inside\" (default: not inverted),\n",
-           program_name);
+    const char* usage =
+        "usage: chaq_sdfgen -i file -o file [-s n] [-ahln]\n"
+        "    -i file: input file\n"
+        "    -o file: output file\n"
+        "    -s n: spread radius in pixels (default 4)\n"
+        "    -a: asymmetric spread (disregard negative distances, becomes unsinged distance transformation)\n"
+        "        (default: symmetric)\n"
+        "    -h: show the usage\n"
+        "    -l: test pixel based on image luminance (default: tests based on alpha channel)\n"
+        "    -n: invert alpha test; values below threshold will be counted as \"inside\" (default: not inverted),\n";
+    puts(usage);
 }
 
 // transforms input image data into boolean buffer
@@ -82,8 +79,6 @@ int main(int argc, char** argv) {
     bool test_above = true;
     bool asymmetric = false;
     size_t spread = 4;
-
-    program_name = argv[0];
 
     // process arguments
     for (int i = 0; i < argc; ++i) {
