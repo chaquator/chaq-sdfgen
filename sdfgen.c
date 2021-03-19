@@ -22,17 +22,17 @@ static const char* program_name;
 
 static void usage() {
     if (program_name == NULL) program_name = "chaq_sdf";
-    printf("usage: %s -i file -o file [-s n]\n"
+    printf("usage: %s -i file -o file [-s n] [-h]\n"
            "    -i file: input file\n"
            "    -o file: output file\n"
-           "    -s n: spread radius in pixels (default 4)\n",
+           "    -s n: spread radius in pixels (default 4)\n"
+           "    -h: show the usage\n",
            program_name);
 }
 
 // transforms input image data into boolean buffer
 static void transform_img_to_bool(const unsigned char* img_in, bool* bool_out, size_t width, size_t height,
                                   size_t stride, size_t offset) {
-    // #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < width * height; ++i) {
         bool pixel = img_in[i * stride + offset] < 127;
         bool_out[i] = pixel;
@@ -42,7 +42,6 @@ static void transform_img_to_bool(const unsigned char* img_in, bool* bool_out, s
 // transforms boolean buffer to float buffer
 static void transform_bool_to_float(const bool* bool_in, float* float_out, size_t width, size_t height,
                                     bool true_is_zero) {
-    // #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < width * height; ++i) {
         float_out[i] = bool_in[i] == true_is_zero ? 0.f : INFINITY;
     }
@@ -50,9 +49,8 @@ static void transform_bool_to_float(const bool* bool_in, float* float_out, size_
 
 // single-channel char array output of input floats
 static void transform_float_to_byte(const float* float_in, unsigned char* byte_out, size_t width, size_t height) {
-    // #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < width * height; ++i) {
-        // clamped linear remap from -10,10 to 0,255
+        // clamped linear remap
         float s_min = 0.f;
         float s_max = 100.f;
         float d_min = 0.f;
@@ -105,6 +103,10 @@ int main(int argc, char** argv) {
                 error("No number specified with spread.");
             }
             spread = strtoull(argv[i], NULL, 10);
+        } break;
+        case 'h': {
+            usage();
+            return 0;
         } break;
         }
     }
