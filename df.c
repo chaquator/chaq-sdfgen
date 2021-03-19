@@ -1,4 +1,5 @@
 #include "df.h"
+#include "utils.h"
 
 #include <assert.h>
 #include <math.h>
@@ -88,7 +89,7 @@ void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t
         // partition img, z, and v into views and pass into dist transform
         struct view_f f = {.start = img + (y * w), .end = img + ((y + 1) * w)};
         struct view_st v = {.start = v_2d + (y * w), .end = v_2d + ((y + 1) * w)};
-        struct view_f z = {.start = z_2d + (y * w), .end = z_2d + ((y + 1) * (w - 1))};
+        struct view_f z = {.start = z_2d + (y * w), .end = z_2d + (((y + 1) * w) - 1)};
         dist_transform_1d(f, v, z);
     }
 }
@@ -100,6 +101,14 @@ void transpose_cpy(float* dest, float* src, size_t w, size_t h) {
     for (size_t y = 0; y < h; ++y) {
         for (size_t x = 0; x < w; ++x) {
             dest[w * x + y] = src[y * h + x];
+        }
+    }
+}
+
+void transpose_cpy_sqrt(float* dest, float* src, size_t w, size_t h) {
+    for (size_t y = 0; y < h; ++y) {
+        for (size_t x = 0; x < w; ++x) {
+            dest[w * x + y] = sqrtf(src[y * h + x]);
         }
     }
 }
@@ -123,7 +132,9 @@ void dist_transform_2d(float* img, size_t w, size_t h) {
     // compute 1d for all rows (now for all columns)
     dist_transform_axis(img_tpose, z_2d, v_2d, h, w);
 
-    // tranpose back
-    transpose_cpy(img, img_tpose, h, w);
+    // tranpose back while computing square root
+    // i miss C++ templates
+    transpose_cpy_sqrt(img, img_tpose, h, w);
+
     free(img_tpose);
 }
