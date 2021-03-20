@@ -86,11 +86,13 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
 // z_2d must be at least (hi-1)*(low) floats large, where hi = max(w,h) and low = min(w,h)
 // v_2d must be at least w*h size_ts large
 void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t h) {
-    for (size_t y = 0; y < h; ++y) {
+    ptrdiff_t y;
+#pragma omp parallel for schedule(dynamic)
+    for (y = 0; (size_t)y < h; ++y) {
         // partition img, z, and v into views and pass into dist transform
-        struct view_f f = {.start = img + (y * w), .end = img + ((y + 1) * w)};
-        struct view_st v = {.start = v_2d + (y * w), .end = v_2d + ((y + 1) * w)};
-        struct view_f z = {.start = z_2d + (y * (w - 1)), .end = z_2d + ((y + 1) * (w - 1))};
+        struct view_f f = {.start = img + ((size_t)y * w), .end = img + (((size_t)y + 1) * w)};
+        struct view_st v = {.start = v_2d + ((size_t)y * w), .end = v_2d + (((size_t)y + 1) * w)};
+        struct view_f z = {.start = z_2d + ((size_t)y * (w - 1)), .end = z_2d + (((size_t)y + 1) * (w - 1))};
         dist_transform_1d(f, v, z);
     }
 }
@@ -99,18 +101,22 @@ void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t
 // w -- width dimension of src
 // h -- height dimension of src
 void transpose_cpy(float* restrict dest, float* restrict src, size_t w, size_t h) {
-    for (size_t y = 0; y < h; ++y) {
-        for (size_t x = 0; x < w; ++x) {
-            dest[w * x + y] = src[y * h + x];
-        }
+    ptrdiff_t i;
+#pragma omp parallel for schedule(static)
+    for (i = 0; (size_t)i < w * h; ++i) {
+        size_t x = (size_t)i % w;
+        size_t y = (size_t)i / w;
+        dest[h * x + y] = src[(size_t)i];
     }
 }
 
 void transpose_cpy_sqrt(float* restrict dest, float* restrict src, size_t w, size_t h) {
-    for (size_t y = 0; y < h; ++y) {
-        for (size_t x = 0; x < w; ++x) {
-            dest[w * x + y] = sqrtf(src[y * h + x]);
-        }
+    ptrdiff_t i;
+#pragma omp parallel for schedule(static)
+    for (i = 0; (size_t)i < w * h; ++i) {
+        size_t x = (size_t)i % w;
+        size_t y = (size_t)i / w;
+        dest[h * x + y] = sqrtf(src[(size_t)i]);
     }
 }
 

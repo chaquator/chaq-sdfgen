@@ -36,9 +36,12 @@ static void usage() {
 // transforms input image data into boolean buffer
 static void transform_img_to_bool(const unsigned char* restrict img_in, bool* restrict bool_out, size_t width,
                                   size_t height, size_t stride, size_t offset, bool test_above) {
-    for (size_t i = 0; i < width * height; ++i) {
+    ptrdiff_t i;
+#pragma omp parallel for schedule(static)
+    for (i = 0; (size_t)i < width * height; ++i) {
         unsigned char threshold = 127;
-        bool pixel = test_above ? img_in[i * stride + offset] > threshold : img_in[i * stride + offset] < threshold;
+        bool pixel = test_above ? img_in[(size_t)i * stride + offset] > threshold
+                                : img_in[(size_t)i * stride + offset] < threshold;
         bool_out[i] = pixel;
     }
 }
@@ -46,15 +49,19 @@ static void transform_img_to_bool(const unsigned char* restrict img_in, bool* re
 // transforms boolean buffer to float buffer
 static void transform_bool_to_float(const bool* restrict bool_in, float* restrict float_out, size_t width,
                                     size_t height, bool true_is_zero) {
-    for (size_t i = 0; i < width * height; ++i) {
-        float_out[i] = bool_in[i] == true_is_zero ? 0.f : INFINITY;
+    ptrdiff_t i;
+#pragma omp parallel for schedule(static)
+    for (i = 0; (size_t)i < width * height; ++i) {
+        float_out[i] = bool_in[(size_t)i] == true_is_zero ? 0.f : INFINITY;
     }
 }
 
 // single-channel char array output of input floats
 static void transform_float_to_byte(const float* restrict float_in, unsigned char* restrict byte_out, size_t width,
                                     size_t height, size_t spread, bool asymmetric) {
-    for (size_t i = 0; i < width * height; ++i) {
+    ptrdiff_t i;
+#pragma omp parallel for schedule(static)
+    for (i = 0; (size_t)i < width * height; ++i) {
         // clamped linear remap
         float s_min = asymmetric ? 0 : -(float)spread;
         float s_max = (float)spread;
@@ -69,19 +76,23 @@ static void transform_float_to_byte(const float* restrict float_in, unsigned cha
         v = v < s_min ? s_min : v;
 
         float remap = ((v - s_min) * nd) / sn + d_min;
-        byte_out[i] = isinf(remap) ? 255 : (unsigned char)lrintf(remap);
+        byte_out[(size_t)i] = isinf(remap) ? 255 : (unsigned char)lrintf(remap);
     }
 }
 
 static void transform_float_sub(float* restrict float_dst, float* restrict float_by, size_t width, size_t height) {
-    for (size_t i = 0; i < width * height; ++i) {
+    ptrdiff_t i;
+#pragma omp parallel for schedule(static)
+    for (i = 0; (size_t)i < width * height; ++i) {
         float bias = -1.f;
-        float val = float_by[i] > 0.f ? float_by[i] + bias : float_by[i];
-        float_dst[i] -= val;
+        float val = float_by[(size_t)i] > 0.f ? float_by[i] + bias : float_by[(size_t)i];
+        float_dst[(size_t)i] -= val;
     }
 }
 
 int main(int argc, char** argv) {
+    omp_set_nested(1);
+
     char* infile = NULL;
     char* outfile = NULL;
 
@@ -188,11 +199,21 @@ int main(int argc, char** argv) {
     float* img_float_outside = malloc((size_t)(w * h) * sizeof(float));
     if (img_float_outside == NULL) error("img_float_outside malloc failed.");
 
-    transform_bool_to_float(img_bool, img_float_inside, (size_t)w, (size_t)h, true);
-    dist_transform_2d(img_float_inside, (size_t)w, (size_t)h);
+#pragma omp parallel sections num_threads(2)
+    {
+#pragma omp section
+        {
+            transform_bool_to_float(img_bool, img_float_inside, (size_t)w, (size_t)h, true);
+            dist_transform_2d(img_float_inside, (size_t)w, (size_t)h);
+        }
+#pragma omp section
+        {
+            transform_bool_to_float(img_bool, img_float_outside, (size_t)w, (size_t)h, false);
+            dist_transform_2d(img_float_outside, (size_t)w, (size_t)h);
+        }
+    }
 
-    transform_bool_to_float(img_bool, img_float_outside, (size_t)w, (size_t)h, false);
-    dist_transform_2d(img_float_outside, (size_t)w, (size_t)h);
+    free(img_bool);
 
     // consolidate in the form of (inside - outside) to img_float_inside
     transform_float_sub(img_float_inside, img_float_outside, (size_t)w, (size_t)h);
@@ -203,7 +224,6 @@ int main(int argc, char** argv) {
     if (img_byte == NULL) error("img_byte malloc failed.");
     transform_float_to_byte(img_float_inside, img_byte, (size_t)w, (size_t)h, spread, asymmetric);
 
-    free(img_bool);
     free(img_float_inside);
 
     // deduce filetype
@@ -242,7 +262,3 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-
-// TODO:
-// - openMP the whole thing
-// - output to alpha channel too
