@@ -32,8 +32,8 @@ static void usage() {
 }
 
 // transforms input image data into boolean buffer
-static void transform_img_to_bool(const unsigned char* img_in, bool* bool_out, size_t width, size_t height,
-                                  size_t stride, size_t offset, bool test_above) {
+static void transform_img_to_bool(const unsigned char* restrict img_in, bool* restrict bool_out, size_t width,
+                                  size_t height, size_t stride, size_t offset, bool test_above) {
     for (size_t i = 0; i < width * height; ++i) {
         unsigned char threshold = 127;
         bool pixel = test_above ? img_in[i * stride + offset] > threshold : img_in[i * stride + offset] < threshold;
@@ -42,16 +42,16 @@ static void transform_img_to_bool(const unsigned char* img_in, bool* bool_out, s
 }
 
 // transforms boolean buffer to float buffer
-static void transform_bool_to_float(const bool* bool_in, float* float_out, size_t width, size_t height,
-                                    bool true_is_zero) {
+static void transform_bool_to_float(const bool* restrict bool_in, float* restrict float_out, size_t width,
+                                    size_t height, bool true_is_zero) {
     for (size_t i = 0; i < width * height; ++i) {
         float_out[i] = bool_in[i] == true_is_zero ? 0.f : INFINITY;
     }
 }
 
 // single-channel char array output of input floats
-static void transform_float_to_byte(const float* float_in, unsigned char* byte_out, size_t width, size_t height,
-                                    size_t spread, bool asymmetric) {
+static void transform_float_to_byte(const float* restrict float_in, unsigned char* restrict byte_out, size_t width,
+                                    size_t height, size_t spread, bool asymmetric) {
     for (size_t i = 0; i < width * height; ++i) {
         // clamped linear remap
         float s_min = asymmetric ? 0 : -(float)spread;
@@ -71,7 +71,7 @@ static void transform_float_to_byte(const float* float_in, unsigned char* byte_o
     }
 }
 
-static void transform_float_sub(float* float_dst, float* float_by, size_t width, size_t height) {
+static void transform_float_sub(float* restrict float_dst, float* restrict float_by, size_t width, size_t height) {
     for (size_t i = 0; i < width * height; ++i) {
         float bias = -1.f;
         float val = float_by[i] > 0.f ? float_by[i] + bias : float_by[i];
