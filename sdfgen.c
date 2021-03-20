@@ -22,6 +22,8 @@ static void usage() {
         "usage: chaq_sdfgen -i file -o file [-s n] [-ahln]\n"
         "    -i file: input file\n"
         "    -o file: output file\n"
+        "        supported output types: png, bmp, jpg, tga\n"
+        "        (deduced by filename, png by default if not deduced)\n"
         "    -s n: spread radius in pixels (default 4)\n"
         "    -a: asymmetric spread (disregard negative distances, becomes unsinged distance transformation)\n"
         "        (default: symmetric)\n"
@@ -204,8 +206,38 @@ int main(int argc, char** argv) {
     free(img_bool);
     free(img_float_inside);
 
+    // deduce filetype
+    size_t filetype = 0;
+    char* dot = strrchr(outfile, '.');
+    if (dot != NULL) {
+        const char* type_table[] = {"png", "bmp", "jpg", "tga"};
+        size_t n_types = sizeof(type_table) / sizeof(const char*);
+        for (; filetype < n_types; ++filetype) {
+            if (strncmp(dot + 1, type_table[filetype], 3) == 0) break;
+        }
+    }
+
     // output image
-    stbi_write_png(outfile, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
+    switch (filetype) {
+    case 1: {
+        // bmp
+        stbi_write_bmp(outfile, w, h, 1, img_byte);
+    } break;
+    case 2: {
+        // jpg
+        stbi_write_jpg(outfile, w, h, 1, img_byte, 100);
+    } break;
+    case 3: {
+        // tga
+        stbi_write_tga(outfile, w, h, 1, img_byte);
+    } break;
+    case 0:
+    default: {
+        // png
+        stbi_write_png(outfile, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
+    } break;
+    }
+
     free(img_byte);
 
     return 0;
@@ -213,4 +245,4 @@ int main(int argc, char** argv) {
 
 // TODO:
 // - openMP the whole thing
-// - support output outside of png
+// - output to alpha channel too

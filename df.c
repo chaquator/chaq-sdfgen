@@ -98,7 +98,7 @@ void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t
 // copy transpose of src to dest, creates a dest that is h x w, where src is w x h
 // w -- width dimension of src
 // h -- height dimension of src
-void transpose_cpy(float* dest, float* src, size_t w, size_t h) {
+void transpose_cpy(float* restrict dest, float* restrict src, size_t w, size_t h) {
     for (size_t y = 0; y < h; ++y) {
         for (size_t x = 0; x < w; ++x) {
             dest[w * x + y] = src[y * h + x];
@@ -106,7 +106,7 @@ void transpose_cpy(float* dest, float* src, size_t w, size_t h) {
     }
 }
 
-void transpose_cpy_sqrt(float* dest, float* src, size_t w, size_t h) {
+void transpose_cpy_sqrt(float* restrict dest, float* restrict src, size_t w, size_t h) {
     for (size_t y = 0; y < h; ++y) {
         for (size_t x = 0; x < w; ++x) {
             dest[w * x + y] = sqrtf(src[y * h + x]);
