@@ -120,7 +120,7 @@ void dist_transform_2d(float* img, size_t w, size_t h) {
     size_t other_dim = w > h ? h : w;
     // (high_dim-1)*(low_dim) is sufficient memory for both orientations
     // given that the requirement for z per row is N-1
-    float* z_2d = malloc((dim)*other_dim * sizeof(float));
+    float* z_2d = malloc((dim - 1) * other_dim * sizeof(float));
     size_t* v_2d = malloc(w * h * sizeof(size_t));
 
     // compute 1d for all rows

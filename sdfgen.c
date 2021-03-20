@@ -66,17 +66,16 @@ static void transform_float_to_byte(const float* float_in, unsigned char* byte_o
         v = v > s_max ? s_max : v;
         v = v < s_min ? s_min : v;
 
-        float remap = (v - s_min) * (nd / sn) + d_min;
-        byte_out[i] = (unsigned char)remap;
+        float remap = ((v - s_min) * nd) / sn + d_min;
+        byte_out[i] = isinf(remap) ? 255 : (unsigned char)lrintf(remap);
     }
 }
 
 static void transform_float_sub(float* float_dst, float* float_by, size_t width, size_t height) {
     for (size_t i = 0; i < width * height; ++i) {
-        // TODO: consider adding a -1 bias to float_by here
-        // justification: single-pixel lines will have distance-to-outside value of 1
-        // which will reduce contrast, there needs to be some 0 value somewhere
-        float_dst[i] -= float_by[i];
+        float bias = -1.f;
+        float val = float_by[i] > 0.f ? float_by[i] + bias : float_by[i];
+        float_dst[i] -= val;
     }
 }
 
@@ -176,7 +175,6 @@ int main(int argc, char** argv) {
 
     transform_img_to_bool(img_original, img_bool, (size_t)w, (size_t)h, (size_t)c * sizeof(unsigned char), test_channel,
                           test_above);
-    stbi_write_png("god.png", w, h, 1, img_bool, w * (int)sizeof(bool));
 
     stbi_image_free(img_original);
 
@@ -214,6 +212,5 @@ int main(int argc, char** argv) {
 }
 
 // TODO:
-// - compute 2d sdf for "outside" pixels
-// - consolidate inside vs outside into single float buffer
 // - openMP the whole thing
+// - support output outside of png
