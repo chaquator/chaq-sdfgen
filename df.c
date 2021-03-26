@@ -88,7 +88,7 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
 void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t h) {
     ptrdiff_t y;
 #pragma omp parallel for schedule(dynamic)
-    for (y = 0; (size_t)y < h; ++y) {
+    for (y = 0; y < (ptrdiff_t)(h); ++y) {
         // partition img, z, and v into views and pass into dist transform
         struct view_f f = {.start = img + ((size_t)y * w), .end = img + (((size_t)y + 1) * w)};
         struct view_st v = {.start = v_2d + ((size_t)y * w), .end = v_2d + (((size_t)y + 1) * w)};
@@ -103,7 +103,7 @@ void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t
 void transpose_cpy(float* restrict dest, float* restrict src, size_t w, size_t h) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
-    for (i = 0; (size_t)i < w * h; ++i) {
+    for (i = 0; i < (ptrdiff_t)(w * h); ++i) {
         size_t x = (size_t)i % w;
         size_t y = (size_t)i / w;
         dest[h * x + y] = src[(size_t)i];
@@ -113,7 +113,7 @@ void transpose_cpy(float* restrict dest, float* restrict src, size_t w, size_t h
 void transpose_cpy_sqrt(float* restrict dest, float* restrict src, size_t w, size_t h) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
-    for (i = 0; (size_t)i < w * h; ++i) {
+    for (i = 0; i < (ptrdiff_t)(w * h); ++i) {
         size_t x = (size_t)i % w;
         size_t y = (size_t)i / w;
         dest[h * x + y] = sqrtf(src[(size_t)i]);
@@ -140,7 +140,6 @@ void dist_transform_2d(float* img, size_t w, size_t h) {
     dist_transform_axis(img_tpose, z_2d, v_2d, h, w);
 
     // tranpose back while computing square root
-    // i miss C++ templates
     transpose_cpy_sqrt(img, img_tpose, h, w);
 
     free(z_2d);

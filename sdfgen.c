@@ -17,14 +17,17 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb/stb_image_write.h"
 
+enum FILETYPE { FT_NONE = -1, FT_PNG, FT_BMP, FT_JPG, FT_TGA };
+
 static void usage() {
     const char* usage =
-        "usage: chaq_sdfgen -i file -o file [-s n] [-ahln]\n"
+        "usage: chaq_sdfgen [-f filetype] -i file -o file [-q n] [-s n] [-ahln]\n"
+        "    -f filetype: manually specify filetype among PNG, BMP, TGA, and JPG\n"
+        "        (default: deduced by output filename. if not deducable, default is png)\n"
         "    -i file: input file\n"
         "    -o file: output file\n"
-        "        supported output types: png, bmp, jpg, tga\n"
-        "        (deduced by filename, png by default if not deduced)\n"
-        "    -s n: spread radius in pixels (default 4)\n"
+        "    -q n: jpg quality (default: 100, only relevant for jpeg output)\n"
+        "    -s n: spread radius in pixels (default: 4)\n"
         "    -a: asymmetric spread (disregard negative distances, becomes unsinged distance transformation)\n"
         "        (default: symmetric)\n"
         "    -h: show the usage\n"
@@ -38,7 +41,7 @@ static void transform_img_to_bool(const unsigned char* restrict img_in, bool* re
                                   size_t height, size_t stride, size_t offset, bool test_above) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
-    for (i = 0; (size_t)i < width * height; ++i) {
+    for (i = 0; i < (ptrdiff_t)(width * height); ++i) {
         unsigned char threshold = 127;
         bool pixel = test_above ? img_in[(size_t)i * stride + offset] > threshold
                                 : img_in[(size_t)i * stride + offset] < threshold;
@@ -51,7 +54,7 @@ static void transform_bool_to_float(const bool* restrict bool_in, float* restric
                                     size_t height, bool true_is_zero) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
-    for (i = 0; (size_t)i < width * height; ++i) {
+    for (i = 0; i < (ptrdiff_t)(width * height); ++i) {
         float_out[i] = bool_in[(size_t)i] == true_is_zero ? 0.f : INFINITY;
     }
 }
@@ -61,7 +64,7 @@ static void transform_float_to_byte(const float* restrict float_in, unsigned cha
                                     size_t height, size_t spread, bool asymmetric) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
-    for (i = 0; (size_t)i < width * height; ++i) {
+    for (i = 0; i < (ptrdiff_t)(width * height); ++i) {
         // clamped linear remap
         float s_min = asymmetric ? 0 : -(float)spread;
         float s_max = (float)spread;
@@ -76,18 +79,27 @@ static void transform_float_to_byte(const float* restrict float_in, unsigned cha
         v = v < s_min ? s_min : v;
 
         float remap = ((v - s_min) * nd) / sn + d_min;
-        byte_out[(size_t)i] = isinf(remap) ? 255 : (unsigned char)lrintf(remap);
+        byte_out[(size_t)i] = (unsigned char)lrintf(remap);
     }
 }
 
 static void transform_float_sub(float* restrict float_dst, float* restrict float_by, size_t width, size_t height) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
-    for (i = 0; (size_t)i < width * height; ++i) {
+    for (i = 0; i < (ptrdiff_t)(width * height); ++i) {
         float bias = -1.f;
         float val = float_by[(size_t)i] > 0.f ? float_by[i] + bias : float_by[(size_t)i];
         float_dst[(size_t)i] -= val;
     }
+}
+
+enum FILETYPE read_filetype(const char* string) {
+    const char* type_table[] = {"png", "bmp", "jpg", "tga"};
+    size_t n_types = sizeof(type_table) / sizeof(const char*);
+    for (size_t filetype = 0; filetype < n_types; ++filetype) {
+        if (strncmp(string, type_table[filetype], 3) == 0) return (enum FILETYPE)filetype;
+    }
+    return FT_NONE;
 }
 
 int main(int argc, char** argv) {
@@ -100,6 +112,8 @@ int main(int argc, char** argv) {
     bool test_above = true;
     bool asymmetric = false;
     size_t spread = 4;
+    size_t quality = 100;
+    enum FILETYPE filetype = FT_NONE;
 
     // process arguments
     for (int i = 0; i < argc; ++i) {
@@ -130,6 +144,25 @@ int main(int argc, char** argv) {
             }
             spread = strtoull(argv[i], NULL, 10);
         } break;
+            // q -- jpeg quality
+        case 'q': {
+            if (++i >= argc) {
+                usage();
+                error("No number specified with quality.");
+            }
+            quality = strtoull(argv[i], NULL, 10);
+        } break;
+            // f -- filetype
+        case 'f': {
+            if (++i >= argc) {
+                usage();
+                error("Filetype not specified with filetype switch.");
+            }
+            if ((filetype = read_filetype(argv[i])) == FT_NONE) {
+                usage();
+                error("Invalid filetype specified.");
+            }
+        } break;
             // flags
         default: {
             size_t j = 1;
@@ -155,11 +188,14 @@ int main(int argc, char** argv) {
                 }
                 ++j;
             }
-
         } break;
         }
     }
 
+    if (!spread || spread > 100) {
+        usage();
+        error("Invalid value given for spread. Must be between 1-100");
+    }
     if (!spread) {
         usage();
         error("Invalid value given for spread. Must be a positive integer.");
@@ -226,32 +262,27 @@ int main(int argc, char** argv) {
 
     free(img_float_inside);
 
-    // deduce filetype
-    size_t filetype = 0;
+    // deduce filetype if not specified
     char* dot = strrchr(outfile, '.');
-    if (dot != NULL) {
-        const char* type_table[] = {"png", "bmp", "jpg", "tga"};
-        size_t n_types = sizeof(type_table) / sizeof(const char*);
-        for (; filetype < n_types; ++filetype) {
-            if (strncmp(dot + 1, type_table[filetype], 3) == 0) break;
-        }
+    if (dot != NULL && filetype == FT_NONE) {
+        filetype = read_filetype(dot + 1);
     }
 
     // output image
     switch (filetype) {
-    case 1: {
+    case FT_BMP: {
         // bmp
         stbi_write_bmp(outfile, w, h, 1, img_byte);
     } break;
-    case 2: {
+    case FT_JPG: {
         // jpg
-        stbi_write_jpg(outfile, w, h, 1, img_byte, 100);
+        stbi_write_jpg(outfile, w, h, 1, img_byte, quality);
     } break;
-    case 3: {
+    case FT_TGA: {
         // tga
         stbi_write_tga(outfile, w, h, 1, img_byte);
     } break;
-    case 0:
+    case FT_PNG:
     default: {
         // png
         stbi_write_png(outfile, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
