@@ -93,7 +93,7 @@ static void transform_float_sub(float* restrict float_dst, float* restrict float
     }
 }
 
-enum FILETYPE read_filetype(const char* string) {
+static enum FILETYPE read_filetype(const char* string) {
     const char* type_table[] = {"png", "bmp", "jpg", "tga"};
     size_t n_types = sizeof(type_table) / sizeof(const char*);
     for (size_t filetype = 0; filetype < n_types; ++filetype) {
@@ -122,19 +122,21 @@ int main(int argc, char** argv) {
         switch (argv[i][1]) {
             // i - input file
         case 'i': {
-            if (++i >= argc) {
+            if (++i >= argc && infile == NULL) {
                 usage();
                 error("No input file specified.");
+            } else if (i < argc) {
+                infile = argv[i];
             }
-            infile = argv[i];
         } break;
             // o - output file
         case 'o': {
-            if (++i >= argc) {
+            if (++i >= argc && outfile == NULL) {
                 usage();
                 error("No output file specified.");
+            } else if (i < argc) {
+                outfile = argv[i];
             }
-            outfile = argv[i];
         } break;
             // s - spread parameter
         case 's': {
@@ -276,14 +278,14 @@ int main(int argc, char** argv) {
     } break;
     case FT_JPG: {
         // jpg
-        stbi_write_jpg(outfile, w, h, 1, img_byte, quality);
+        stbi_write_jpg(outfile, w, h, 1, img_byte, (int)quality);
     } break;
     case FT_TGA: {
         // tga
         stbi_write_tga(outfile, w, h, 1, img_byte);
     } break;
     case FT_PNG:
-    default: {
+    case FT_NONE: {
         // png
         stbi_write_png(outfile, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
     } break;
