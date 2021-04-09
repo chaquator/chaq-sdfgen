@@ -194,9 +194,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (!spread || spread > 100) {
+    if (!quality || quality > 100) {
         usage();
-        error("Invalid value given for spread. Must be between 1-100");
+        error("Invalid value given for jpeg quality. Must be between 1-100");
     }
     if (!spread) {
         usage();
