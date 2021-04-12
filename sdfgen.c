@@ -269,16 +269,16 @@ int main(int argc, char** argv) {
 
     free(img_bool);
 
-    // consolidate in the form of (inside - outside) to img_float_inside
-    transform_float_sub(img_float_inside, img_float_outside, (size_t)w, (size_t)h);
-    free(img_float_outside);
+    // consolidate in the form of (outside - inside) to img_float_outside
+    transform_float_sub(img_float_outside, img_float_inside, (size_t)w, (size_t)h);
+    free(img_float_inside);
 
     // transform distance values to pixel values
     unsigned char* img_byte = malloc((size_t)(w * h) * sizeof(unsigned char));
     if (img_byte == NULL) error("img_byte malloc failed.");
-    transform_float_to_byte(img_float_inside, img_byte, (size_t)w, (size_t)h, spread, asymmetric);
+    transform_float_to_byte(img_float_outside, img_byte, (size_t)w, (size_t)h, spread, asymmetric);
 
-    free(img_float_inside);
+    free(img_float_outside);
 
     // deduce filetype if not specified
     char* dot = strrchr(outfile, '.');
