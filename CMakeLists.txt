@@ -20,4 +20,4 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic -flto)
 endif()
 
-add_executable(chaq_sdfgen sdfgen.c df.c utils.c)
+add_executable(chaq_sdfgen sdfgen.c df.c)

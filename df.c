@@ -1,13 +1,11 @@
 #include "df.h"
-#include "utils.h"
-
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 // intersection of 2 parabolas, not defined if both parabolas have vertex y's at infinity
-float parabola_intersect(struct view_f f, size_t p, size_t q) {
+static float parabola_intersect(struct view_f f, size_t p, size_t q) {
     assert(p != q);
     assert((ptrdiff_t)p < (f.end - f.start));
     assert((ptrdiff_t)q < (f.end - f.start));
@@ -25,7 +23,7 @@ float parabola_intersect(struct view_f f, size_t p, size_t q) {
 // f -- single row buffer of parabola heights, sized N
 // v -- vertices buffer, sized N
 // z -- break point buffer, associates z[n] with v[n]'s right bound, sized N-1
-void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
+static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
     assert((f.end - f.start) > 0);
     assert((v.end - v.start) > 0);
     assert((z.end - z.start) > 0);
@@ -85,7 +83,7 @@ void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
 // img must be at least w*h floats large
 // z_2d must be at least (hi-1)*(low) floats large, where hi = max(w,h) and low = min(w,h)
 // v_2d must be at least w*h size_ts large
-void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t h) {
+static void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t h) {
     ptrdiff_t y;
 #pragma omp parallel for schedule(dynamic)
     for (y = 0; y < (ptrdiff_t)(h); ++y) {
@@ -100,7 +98,7 @@ void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t
 // copy transpose of src to dest, creates a dest that is h x w, where src is w x h
 // w -- width dimension of src
 // h -- height dimension of src
-void transpose_cpy(float* restrict dest, float* restrict src, size_t w, size_t h) {
+static void transpose_cpy(float* restrict dest, float* restrict src, size_t w, size_t h) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
     for (i = 0; i < (ptrdiff_t)(w * h); ++i) {
@@ -110,7 +108,7 @@ void transpose_cpy(float* restrict dest, float* restrict src, size_t w, size_t h
     }
 }
 
-void transpose_cpy_sqrt(float* restrict dest, float* restrict src, size_t w, size_t h) {
+static void transpose_cpy_sqrt(float* restrict dest, float* restrict src, size_t w, size_t h) {
     ptrdiff_t i;
 #pragma omp parallel for schedule(static)
     for (i = 0; i < (ptrdiff_t)(w * h); ++i) {
@@ -122,11 +120,11 @@ void transpose_cpy_sqrt(float* restrict dest, float* restrict src, size_t w, siz
 
 void dist_transform_2d(float* img, size_t w, size_t h) {
     // allocate auxiliary memory
-    size_t dim = w > h ? w : h;
-    size_t other_dim = w > h ? h : w;
+    size_t high_dim = w > h ? w : h;
+    size_t low_dim = w > h ? h : w;
     // (high_dim-1)*(low_dim) is sufficient memory for both orientations
     // given that the requirement for z per row is N-1
-    float* z_2d = malloc((dim - 1) * other_dim * sizeof(float));
+    float* z_2d = malloc((high_dim - 1) * low_dim * sizeof(float));
     size_t* v_2d = malloc(w * h * sizeof(size_t));
 
     // compute 1d for all rows

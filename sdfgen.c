@@ -9,8 +9,6 @@
 #include <omp.h>
 
 #include "df.h"
-#include "utils.h"
-#include "view.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
@@ -18,6 +16,24 @@
 #include "stb/stb_image_write.h"
 
 enum FILETYPE { FT_NONE = -1, FT_PNG, FT_BMP, FT_JPG, FT_TGA };
+
+static void error(const char* str, ...) {
+    va_list args;
+    va_start(args, str);
+    vfprintf(stderr, str, args);
+    exit(-1);
+}
+
+/*
+static void dump_to_file(const char* filename, const void* data, size_t size) {
+    FILE* dumpfile;
+    if (fopen_s(&dumpfile, filename, "wb")) {
+        error(false, "Failed to open dump file.");
+    }
+    if (fwrite(data, size, 1, dumpfile) < 1) error("Failed to dump file %s.", filename);
+    fclose(dumpfile);
+}
+*/
 
 static void usage() {
     const char* usage =
@@ -78,8 +94,8 @@ static void transform_float_to_byte(const float* restrict float_in, unsigned cha
         v = v > s_max ? s_max : v;
         v = v < s_min ? s_min : v;
 
-        float remap = ((v - s_min) * nd) / sn + d_min;
-        byte_out[(size_t)i] = (unsigned char)lrintf(remap);
+        float remap = (((v - s_min) * nd) / sn) + d_min;
+        byte_out[(size_t)i] = (unsigned char)remap;
     }
 }
 
