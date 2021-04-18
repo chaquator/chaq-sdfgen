@@ -67,6 +67,8 @@ static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z
         v.start[k] = q;
     }
 
+    float* temp_buf = malloc(sizeof(float) * (size_t)(f.end - f.start));
+
     // Part 2: Populate f using lower envelope
     size_t j = 0;
     for (ptrdiff_t q = 0; q < (f.end - f.start); ++q) {
@@ -75,8 +77,15 @@ static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z
         // Set point at f to parabola (originating at v[j])
         size_t v_j = v.start[j];
         float displacement = (float)q - (float)v_j;
-        f.start[q] = displacement * displacement + f.start[v_j];
+        // f.start[q] = displacement * displacement + f.start[v_j];
+        temp_buf[q] = displacement * displacement + f.start[v_j];
     }
+
+    for (size_t i = 0; i < (size_t)(f.end - f.start); ++i) {
+        f.start[i] = temp_buf[i];
+    }
+
+    free(temp_buf);
 }
 
 // compute distance transform along x-axis of image using buffers passed in
