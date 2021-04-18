@@ -6,7 +6,7 @@ bitmap from an input image.
 ![Input](image/sample_input.png)
 ![Output](image/sample_output.png)
 
-Result generated using `chaq_sdfgen -i sample_input.png -o sample_output.png -s 100 -aln`.
+Result generated using `chaq_sdfgen -i sample_input.png -o sample_output.png -s 100 -al`.
 
 ## References
 [Original article](http://cs.brown.edu/people/pfelzens/dt/)
