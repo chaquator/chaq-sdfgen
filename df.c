@@ -6,12 +6,6 @@
 
 // intersection of 2 parabolas, not defined if both parabolas have vertex y's at infinity
 static float parabola_intersect(struct view_f f, size_t p, size_t q) {
-    assert(p != q);
-    assert((ptrdiff_t)p < (f.end - f.start));
-    assert((ptrdiff_t)q < (f.end - f.start));
-    assert(!isinf(f.start[p]));
-    assert(!isinf(f.start[q]));
-
     float fp = (float)p;
     float fq = (float)q;
     return ((f.start[q] - f.start[p]) + ((fq * fq) - (fp * fp))) / (2 * (fq - fp));
@@ -22,14 +16,9 @@ static float parabola_intersect(struct view_f f, size_t p, size_t q) {
 //      http://cs.brown.edu/people/pfelzens/dt/
 // f -- single row buffer of parabola heights, sized N
 // v -- vertices buffer, sized N
+// h -- vertex height buffer, sized N
 // z -- break point buffer, associates z[n] with v[n]'s right bound, sized N-1
-static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z) {
-    assert((f.end - f.start) > 0);
-    assert((v.end - v.start) > 0);
-    assert((z.end - z.start) > 0);
-    assert((v.end - v.start) == (f.end - f.start));
-    assert((z.end - z.start) == (f.end - f.start) - 1);
-
+static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f h, struct view_f z) {
     // Single-cell is already complete
     if ((f.end - f.start) <= 1) return;
 
@@ -62,12 +51,11 @@ static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z
         // Right bound of current parabola is intersection
         z.start[k] = s;
         ++k;
-        assert((ptrdiff_t)k < (v.end - v.start));
         // Horizontal position of next parabola is vertex
         v.start[k] = q;
+        // Vertical position of next parabola
+        h.start[k] = f.start[q];
     }
-
-    float* temp_buf = malloc(sizeof(float) * (size_t)(f.end - f.start));
 
     // Part 2: Populate f using lower envelope
     size_t j = 0;
@@ -77,30 +65,34 @@ static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f z
         // Set point at f to parabola (originating at v[j])
         size_t v_j = v.start[j];
         float displacement = (float)q - (float)v_j;
-        // f.start[q] = displacement * displacement + f.start[v_j];
-        temp_buf[q] = displacement * displacement + f.start[v_j];
+        f.start[q] = displacement * displacement + h.start[j];
     }
-
-    for (size_t i = 0; i < (size_t)(f.end - f.start); ++i) {
-        f.start[i] = temp_buf[i];
-    }
-
-    free(temp_buf);
 }
 
 // compute distance transform along x-axis of image using buffers passed in
 // img must be at least w*h floats large
-// z_2d must be at least (hi-1)*(low) floats large, where hi = max(w,h) and low = min(w,h)
-// v_2d must be at least w*h size_ts large
-static void dist_transform_axis(float* img, float* z_2d, size_t* v_2d, size_t w, size_t h) {
+static void dist_transform_axis(float* img, size_t w, size_t h) {
     ptrdiff_t y;
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(static)
     for (y = 0; y < (ptrdiff_t)(h); ++y) {
         // partition img, z, and v into views and pass into dist transform
         struct view_f f = {.start = img + ((size_t)y * w), .end = img + (((size_t)y + 1) * w)};
-        struct view_st v = {.start = v_2d + ((size_t)y * w), .end = v_2d + (((size_t)y + 1) * w)};
-        struct view_f z = {.start = z_2d + ((size_t)y * (w - 1)), .end = z_2d + (((size_t)y + 1) * (w - 1))};
-        dist_transform_1d(f, v, z);
+        // Verticess buffer
+        size_t* v = malloc(sizeof(size_t) * (size_t)(w));
+        // Vertex height buffer
+        float* p = malloc(sizeof(float) * (size_t)(w));
+        // Break point buffer
+        float* z = malloc(sizeof(float) * (size_t)(w - 1));
+
+        struct view_st v_v = {.start = v, .end = v + w};
+        struct view_f v_p = {.start = p, .end = p + w};
+        struct view_f v_z = {.start = z, .end = z + (w - 1)};
+
+        dist_transform_1d(f, v_v, v_p, v_z);
+
+        free(z);
+        free(p);
+        free(v);
     }
 }
 
@@ -128,28 +120,18 @@ static void transpose_cpy_sqrt(float* restrict dest, float* restrict src, size_t
 }
 
 void dist_transform_2d(float* img, size_t w, size_t h) {
-    // allocate auxiliary memory
-    size_t high_dim = w > h ? w : h;
-    size_t low_dim = w > h ? h : w;
-    // (high_dim-1)*(low_dim) is sufficient memory for both orientations
-    // given that the requirement for z per row is N-1
-    float* z_2d = malloc((high_dim - 1) * low_dim * sizeof(float));
-    size_t* v_2d = malloc(w * h * sizeof(size_t));
-
     // compute 1d for all rows
-    dist_transform_axis(img, z_2d, v_2d, w, h);
+    dist_transform_axis(img, w, h);
 
     // transpose
     float* img_tpose = malloc(w * h * sizeof(float));
     transpose_cpy(img_tpose, img, w, h);
 
     // compute 1d for all rows (now for all columns)
-    dist_transform_axis(img_tpose, z_2d, v_2d, h, w);
+    dist_transform_axis(img_tpose, h, w);
 
     // tranpose back while computing square root
     transpose_cpy_sqrt(img, img_tpose, h, w);
 
-    free(z_2d);
-    free(v_2d);
     free(img_tpose);
 }
