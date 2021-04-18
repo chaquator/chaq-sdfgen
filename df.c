@@ -32,6 +32,7 @@ static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f h
 
     // First vertex is that of the first parabola
     v.start[0] = offset;
+    h.start[0] = f.start[offset];
 
     size_t k = 0;
     for (size_t q = offset + 1; q < (size_t)(f.end - f.start); ++q) {
