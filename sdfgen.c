@@ -8,6 +8,11 @@
 
 #include <omp.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include "df.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -42,6 +47,7 @@ static void usage() {
         "        (default: deduced by output filename. if not deducable, default is png)\n"
         "    -i file: input file\n"
         "    -o file: output file\n"
+        "        specify \"-\" to output to stdout\n"
         "    -q n: jpg quality (default: 100, only relevant for jpeg output)\n"
         "    -s n: spread radius in pixels (default: 4)\n"
         "    -a: asymmetric spread (disregard negative distances, becomes unsinged distance transformation)\n"
@@ -118,6 +124,11 @@ static enum FILETYPE read_filetype(const char* string) {
     return FT_NONE;
 }
 
+static void write_to_stdout(void* context, void* data, int size) {
+    (void)(context); // GO AWAY WARNING
+    fwrite(data, (size_t)size, 1, stdout);
+}
+
 int main(int argc, char** argv) {
     omp_set_nested(1);
 
@@ -130,6 +141,7 @@ int main(int argc, char** argv) {
     size_t spread = 4;
     size_t quality = 100;
     enum FILETYPE filetype = FT_NONE;
+    bool output_to_stdout = false;
 
     // process arguments
     for (int i = 0; i < argc; ++i) {
@@ -151,6 +163,12 @@ int main(int argc, char** argv) {
                 usage();
                 error("No output file specified.");
             } else if (i < argc) {
+                if (strncmp("-", argv[i], 2) == 0) {
+                    output_to_stdout = true;
+#ifdef _WIN32
+                    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+                }
                 outfile = argv[i];
             }
         } break;
@@ -281,29 +299,47 @@ int main(int argc, char** argv) {
     free(img_float_outside);
 
     // deduce filetype if not specified
-    char* dot = strrchr(outfile, '.');
-    if (dot != NULL && filetype == FT_NONE) {
-        filetype = read_filetype(dot + 1);
+    if (!output_to_stdout) {
+        char* dot = strrchr(outfile, '.');
+        if (dot != NULL && filetype == FT_NONE) {
+            filetype = read_filetype(dot + 1);
+        }
     }
 
     // output image
     switch (filetype) {
     case FT_BMP: {
         // bmp
-        stbi_write_bmp(outfile, w, h, 1, img_byte);
+        if (output_to_stdout) {
+            stbi_write_bmp_to_func(write_to_stdout, NULL, w, h, 1, img_byte);
+        } else {
+            stbi_write_bmp(outfile, w, h, 1, img_byte);
+        }
     } break;
     case FT_JPG: {
         // jpg
-        stbi_write_jpg(outfile, w, h, 1, img_byte, (int)quality);
+        if (output_to_stdout) {
+            stbi_write_jpg_to_func(write_to_stdout, NULL, w, h, 1, img_byte, (int)quality);
+        } else {
+            stbi_write_jpg(outfile, w, h, 1, img_byte, (int)quality);
+        }
     } break;
     case FT_TGA: {
         // tga
-        stbi_write_tga(outfile, w, h, 1, img_byte);
+        if (output_to_stdout) {
+            stbi_write_tga_to_func(write_to_stdout, NULL, w, h, 1, img_byte);
+        } else {
+            stbi_write_tga(outfile, w, h, 1, img_byte);
+        }
     } break;
     case FT_PNG:
     case FT_NONE: {
         // png
-        stbi_write_png(outfile, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
+        if (output_to_stdout) {
+            stbi_write_png_to_func(write_to_stdout, NULL, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
+        } else {
+            stbi_write_png(outfile, w, h, 1, img_byte, w * (int)sizeof(unsigned char));
+        }
     } break;
     }
 
