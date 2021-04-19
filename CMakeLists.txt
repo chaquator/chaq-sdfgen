@@ -18,6 +18,7 @@ if (MSVC)
     add_compile_options(/W4 /WX)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic -flto)
+    link_libraries(m)
 endif()
 
 add_executable(chaq_sdfgen sdfgen.c df.c)
