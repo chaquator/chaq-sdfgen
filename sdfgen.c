@@ -29,27 +29,17 @@ static void error(const char* str, ...) {
     exit(-1);
 }
 
-/*
-static void dump_to_file(const char* filename, const void* data, size_t size) {
-    FILE* dumpfile;
-    if (fopen_s(&dumpfile, filename, "wb")) {
-        error(false, "Failed to open dump file.");
-    }
-    if (fwrite(data, size, 1, dumpfile) < 1) error("Failed to dump file %s.", filename);
-    fclose(dumpfile);
-}
-*/
-
 static void usage() {
     const char* usage =
         "usage: chaq_sdfgen [-f filetype] -i file -o file [-q n] [-s n] [-ahln]\n"
         "    -f filetype: manually specify filetype among PNG, BMP, TGA, and JPG\n"
         "        (default: deduced by output filename. if not deducable, default is png)\n"
         "    -i file: input file\n"
+        "        specify \"-\" to read input from stdin\n"
         "    -o file: output file\n"
         "        specify \"-\" to output to stdout\n"
         "    -q n: jpg quality (default: 100, only relevant for jpeg output)\n"
-        "    -s n: spread radius in pixels (default: 4)\n"
+        "    -s n: spread radius in pixels (default: 64)\n"
         "    -a: asymmetric spread (disregard negative distances, becomes unsinged distance transformation)\n"
         "        (default: symmetric)\n"
         "    -h: show the usage\n"
@@ -138,10 +128,12 @@ int main(int argc, char** argv) {
     size_t test_channel = 1;
     bool test_above = true;
     bool asymmetric = false;
-    size_t spread = 4;
+    size_t spread = 64;
     size_t quality = 100;
     enum FILETYPE filetype = FT_NONE;
+
     bool output_to_stdout = false;
+    bool open_from_stdin = false;
 
     // process arguments
     for (int i = 0; i < argc; ++i) {
@@ -154,6 +146,12 @@ int main(int argc, char** argv) {
                 usage();
                 error("No input file specified.");
             } else if (i < argc) {
+                if (strncmp("-", argv[i], 2) == 0) {
+                    open_from_stdin = true;
+#ifdef _WIN32
+                    _setmode(_fileno(stdin), _O_BINARY);
+#endif
+                }
                 infile = argv[i];
             }
         } break;
@@ -250,7 +248,12 @@ int main(int argc, char** argv) {
     int h;
     int n;
     int c = 2;
-    unsigned char* img_original = stbi_load(infile, &w, &h, &n, c);
+    unsigned char* img_original;
+    if (open_from_stdin) {
+        img_original = stbi_load_from_file(stdin, &w, &h, &n, c);
+    } else {
+        img_original = stbi_load(infile, &w, &h, &n, c);
+    }
 
     if (img_original == NULL) error("Input file could not be opened.");
 
