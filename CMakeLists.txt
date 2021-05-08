@@ -14,11 +14,14 @@ if(OpenMP_FOUND)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 endif()
 
-if (MSVC)
+if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     add_compile_options(/W4 /WX)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic -flto)
-    link_libraries(m)
 endif()
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    link_libraries(m)
+endif()    
 
 add_executable(chaq_sdfgen sdfgen.c df.c)

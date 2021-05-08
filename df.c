@@ -73,11 +73,9 @@ static void dist_transform_1d(struct view_f f, struct view_st v, struct view_f h
 // compute distance transform along x-axis of image using buffers passed in
 // img must be at least w*h floats large
 static void dist_transform_axis(float* img, size_t w, size_t h) {
-    ptrdiff_t y;
-#pragma omp parallel for schedule(static)
-    for (y = 0; y < (ptrdiff_t)(h); ++y) {
-        // partition img, z, and v into views and pass into dist transform
-        struct view_f f = {.start = img + ((size_t)y * w), .end = img + (((size_t)y + 1) * w)};
+#pragma omp parallel
+    {
+        ptrdiff_t y;
         // Verticess buffer
         size_t* v = malloc(sizeof(size_t) * (size_t)(w));
         // Vertex height buffer
@@ -85,11 +83,17 @@ static void dist_transform_axis(float* img, size_t w, size_t h) {
         // Break point buffer
         float* z = malloc(sizeof(float) * (size_t)(w - 1));
 
-        struct view_st v_v = {.start = v, .end = v + w};
-        struct view_f v_p = {.start = p, .end = p + w};
-        struct view_f v_z = {.start = z, .end = z + (w - 1)};
+#pragma omp for schedule(static)
+        for (y = 0; y < (ptrdiff_t)(h); ++y) {
+            // partition img, z, and v into views and pass into dist transform
+            struct view_f f = {.start = img + ((size_t)y * w), .end = img + (((size_t)y + 1) * w)};
 
-        dist_transform_1d(f, v_v, v_p, v_z);
+            struct view_st v_v = {.start = v, .end = v + w};
+            struct view_f v_p = {.start = p, .end = p + w};
+            struct view_f v_z = {.start = z, .end = z + (w - 1)};
+
+            dist_transform_1d(f, v_v, v_p, v_z);
+        }
 
         free(z);
         free(p);
