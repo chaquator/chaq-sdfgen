@@ -83,14 +83,14 @@ static void dist_transform_axis(float* img, size_t w, size_t h) {
         // Break point buffer
         float* z = malloc(sizeof(float) * (size_t)(w - 1));
 
+        struct view_st v_v = {.start = v, .end = v + w};
+        struct view_f v_p = {.start = p, .end = p + w};
+        struct view_f v_z = {.start = z, .end = z + (w - 1)};
+
 #pragma omp for schedule(static)
         for (y = 0; y < (ptrdiff_t)(h); ++y) {
             // partition img, z, and v into views and pass into dist transform
             struct view_f f = {.start = img + ((size_t)y * w), .end = img + (((size_t)y + 1) * w)};
-
-            struct view_st v_v = {.start = v, .end = v + w};
-            struct view_f v_p = {.start = p, .end = p + w};
-            struct view_f v_z = {.start = z, .end = z + (w - 1)};
 
             dist_transform_1d(f, v_v, v_p, v_z);
         }
