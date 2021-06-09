@@ -11,7 +11,7 @@ set(CMAKE_BUILD_TYPE Release)
 
 find_package(OpenMP)
 if(OpenMP_FOUND)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+    link_libraries(OpenMP::OpenMP_C)
 endif()
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
