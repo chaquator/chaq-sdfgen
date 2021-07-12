@@ -2,11 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <iomanip>
-#include <ios>
-#include <iostream>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -15,11 +11,14 @@
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
 
-#define CL_HPP_TARGET_OPENCL_VERSION 220
-#include <CL/cl2.hpp>
+#define CL_TARGET_OPENCL_VERSION 220
+#include <CL/cl.h>
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STBI_FAILURE_USERMSG
 #include <stb/stb_image.h>
+
+#include <iostream>
 
 static void open_image(std::string_view filename, std::uint8_t** data, std::size_t* width, std::size_t* height,
                        std::size_t* num_channels) {
@@ -28,18 +27,17 @@ static void open_image(std::string_view filename, std::uint8_t** data, std::size
     unsigned char* stbi_data;
     int w, h, n;
 
-    constexpr int c = 2;
     if (use_stdin) {
         spdlog::trace("Loading image from stdin");
-        stbi_data = stbi_load_from_file(stdin, &w, &h, &n, c);
+        stbi_data = stbi_load_from_file(stdin, &w, &h, &n, 2);
     } else {
         spdlog::trace("Loading image from filename \"{}\"", filename);
-        stbi_data = stbi_load(filename.data(), &w, &h, &n, c);
+        stbi_data = stbi_load(filename.data(), &w, &h, &n, 2);
     }
     *data = static_cast<std::uint8_t*>(stbi_data);
 
     if (*data == nullptr) {
-        spdlog::error("Image load failed (stbi error: {})", stbi_failure_reason());
+        spdlog::error("Loading image failed (stbi error: {})", stbi_failure_reason());
         return;
     }
 
@@ -107,60 +105,88 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    spdlog::set_level(program.get<spdlog::level::level_enum>("--log-level"));
-
     auto infile = program.get<std::string>("input_file");
     auto outfile = program.get<std::string>("output_file");
+
+    // set log level
+    auto log_level = program.get<spdlog::level::level_enum>("--log-level");
+    spdlog::set_level(log_level);
 
     // load image (from seperate thread)
     std::size_t img_w, img_h, img_channels;
     std::uint8_t* img_data;
-
     std::thread load_image_thread{open_image, infile, &img_data, &img_w, &img_h, &img_channels};
 
     // opencl setup
-    cl::Platform platform;
-    cl::Device device;
-    cl::Context ctx;
-    cl::CommandQueue queue;
+    cl_int err;
+    cl_platform_id platform;
+    cl_device_id device;
+    cl_context ctx;
+    cl_command_queue queue;
 
-    cl_int res;
-    {
-        std::vector<cl::Device> devices;
-        std::vector<cl::Platform> platforms;
+    std::size_t aux_size;
+    std::string aux_str;
 
-        spdlog::trace("Getting OpenCL platforms");
-        res = cl::Platform::get(&platforms);
-        if (res != CL_SUCCESS) {
-            spdlog::critical("Error getting platforms (OpenCL Error: {})", res);
-            return EXIT_FAILURE;
-        }
-        platform = platforms.front();
-        spdlog::info("OpenCL platform name: {}", platform.getInfo<CL_PLATFORM_NAME>());
-        spdlog::info("OpenCL platform version: {}", platform.getInfo<CL_PLATFORM_VERSION>());
-
-        spdlog::trace("Grabbing device from platform");
-        res = platform.getDevices(CL_DEVICE_TYPE_GPU, &devices);
-        if (res != CL_SUCCESS) {
-            spdlog::critical("Error getting device from platform (OpenCL Error: {})", res);
-            return EXIT_FAILURE;
-        }
-        device = devices.front();
-        spdlog::info("OpenCL device name: {}", device.getInfo<CL_DEVICE_NAME>());
-
-        spdlog::trace("Creating context with device");
-        ctx = cl::Context(device, NULL, NULL, NULL, &res);
-        if (res != CL_SUCCESS) {
-            spdlog::critical("Error creating context (OpenCL Error: {})", res);
-            return EXIT_FAILURE;
-        }
-        spdlog::trace("Context created");
+    // opencl platform
+    err = clGetPlatformIDs(1, &platform, nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error getting platform ID (OpenCL error: {})", err);
+        return EXIT_FAILURE;
     }
 
-    spdlog::trace("Creating command queue");
-    queue = cl::CommandQueue(ctx, device, 0, &res);
-    if (res != CL_SUCCESS) {
-        spdlog::critical("Error creating command queue (OpenCL Error: {})", res);
+    // opencl platform name
+    clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &aux_size);
+    aux_str.resize(aux_size / sizeof(char));
+    err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, aux_str.capacity() * sizeof(char), aux_str.data(), nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error getting OpenCL platform name (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    spdlog::info("OpenCL platform name: {}", aux_str);
+
+    // opencl platform version
+    clGetPlatformInfo(platform, CL_PLATFORM_VERSION, 0, nullptr, &aux_size);
+    aux_str.resize(aux_size / sizeof(char));
+    err = clGetPlatformInfo(platform, CL_PLATFORM_VERSION, aux_str.capacity() * sizeof(char), aux_str.data(), nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error getting OpenCL platform version (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    spdlog::info("OpenCL platform version: {}", aux_str);
+
+    // opencl device
+    clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error getting OpenCL device ID (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+
+    // opencl device name
+    clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &aux_size);
+    aux_str.resize(aux_size / sizeof(char));
+    err = clGetDeviceInfo(device, CL_DEVICE_NAME, aux_str.capacity() * sizeof(char), aux_str.data(), nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error getting OpenCL device name (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    spdlog::info("OpenCL device name: {}", aux_str);
+
+    // opencl context
+    ctx = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error creating OpenCL context (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+
+    // opencl command queue
+    cl_command_queue_properties properties[] = {
+        CL_QUEUE_PROPERTIES,
+        CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE,
+        0,
+    };
+    queue = clCreateCommandQueueWithProperties(ctx, device, properties, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error creating OpenCL queue (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
 
@@ -173,6 +199,9 @@ int main(int argc, char* argv[]) {
 
     // free image load
     stbi_image_free(img_data);
+
+    clReleaseCommandQueue(queue);
+    clReleaseContext(ctx);
 
     return 0;
 }
