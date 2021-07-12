@@ -2,7 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -20,8 +22,12 @@
 
 #include <iostream>
 
-static void open_image(std::string_view filename, std::uint8_t** data, std::size_t* width, std::size_t* height,
-                       std::size_t* num_channels) {
+struct stbi_img {
+    std::uint8_t* data = nullptr;
+    std::size_t width = 0;
+    std::size_t height = 0;
+};
+static std::optional<stbi_img> open_image(std::string_view filename) {
     bool use_stdin = filename == "-";
 
     unsigned char* stbi_data;
@@ -34,19 +40,20 @@ static void open_image(std::string_view filename, std::uint8_t** data, std::size
         spdlog::trace("Loading image from filename \"{}\"", filename);
         stbi_data = stbi_load(filename.data(), &w, &h, &n, 2);
     }
-    *data = static_cast<std::uint8_t*>(stbi_data);
 
-    if (*data == nullptr) {
+    if (stbi_data == nullptr) {
         spdlog::error("Loading image failed (stbi error: {})", stbi_failure_reason());
-        return;
+        return {};
     }
 
     spdlog::trace("Image stats:");
     spdlog::trace("W: {}, H: {}, Channels: {}", w, h, n);
 
-    *width = static_cast<std::size_t>(w);
-    *height = static_cast<std::size_t>(h);
-    *num_channels = static_cast<std::size_t>(n);
+    return {{
+        static_cast<std::uint8_t*>(stbi_data),
+        static_cast<std::size_t>(w),
+        static_cast<std::size_t>(h),
+    }};
 }
 
 int main(int argc, char* argv[]) {
@@ -112,10 +119,8 @@ int main(int argc, char* argv[]) {
     auto log_level = program.get<spdlog::level::level_enum>("--log-level");
     spdlog::set_level(log_level);
 
-    // load image (from seperate thread)
-    std::size_t img_w, img_h, img_channels;
-    std::uint8_t* img_data;
-    std::thread load_image_thread{open_image, infile, &img_data, &img_w, &img_h, &img_channels};
+    // load image asynchronously
+    auto image_fut = std::async(std::launch::async, open_image, infile);
 
     // opencl setup
     cl_int err;
@@ -191,14 +196,15 @@ int main(int argc, char* argv[]) {
     }
 
     // wait on image
-    load_image_thread.join();
-    if (img_data == nullptr) {
+    auto image_opt = image_fut.get();
+    if (!image_opt) {
         spdlog::critical("Image open failed.");
         return EXIT_FAILURE;
     }
+    auto image = image_opt.value();
 
     // free image load
-    stbi_image_free(img_data);
+    stbi_image_free(image.data);
 
     clReleaseCommandQueue(queue);
     clReleaseContext(ctx);
