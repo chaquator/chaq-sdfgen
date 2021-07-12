@@ -25,6 +25,7 @@ static void error(const char* str, ...) {
     va_list args;
     va_start(args, str);
     vfprintf(stderr, str, args);
+    putc('\n', stderr);
     exit(-1);
 }
 
