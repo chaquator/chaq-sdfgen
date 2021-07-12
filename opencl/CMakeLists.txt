@@ -1,19 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-  add_compile_options(/W4 /WX)
-else()
-  add_compile_options(-Wall -Wextra -Wpedantic -flto)
-endif()
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  link_libraries(m)
-endif()
-
 # adapted from https://beesbuzz.biz/code/4399-Embedding-binary-resources-with-CMake-and-C-11
 function(add_resources out_var)
   set(result)
@@ -33,6 +19,20 @@ function(add_resources out_var)
 endfunction()
 
 add_executable(chaq_sdfgen_opencl main.cpp)
+
+set_target_properties(
+  chaq_sdfgen_opencl
+  PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  target_compile_options(chaq_sdfgen_opencl PRIVATE /W4 /Wx)
+else()
+  target_compile_options(chaq_sdfgen_opencl PRIVATE -Wall -Wextra -Wpedantic -flto)
+endif()
 
 set(SPDLOG_FMT_EXTERNAL)
 

@@ -193,7 +193,7 @@ int main(int argc, char* argv[]) {
     // wait on image
     load_image_thread.join();
     if (img_data == nullptr) {
-        spdlog::error("Image open failed.");
+        spdlog::critical("Image open failed.");
         return EXIT_FAILURE;
     }
 
