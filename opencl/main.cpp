@@ -7,8 +7,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
-#include <vector>
 
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
@@ -20,13 +18,32 @@
 #define STBI_FAILURE_USERMSG
 #include <stb/stb_image.h>
 
-#include <iostream>
+extern const char _binary_opencl_sdf_cl_start, _binary_opencl_sdf_cl_end;
+
+// small helper class that gives raii semantics for trivial handles that are already acquired
+template <typename T, typename F>
+class auto_release {
+  private:
+    T handle = {};
+    F release_func = {};
+    bool valid = false;
+
+  public:
+    auto_release() = default;
+    auto_release(T h, F f) : handle(h), release_func(f), valid(true) {}
+    auto_release(auto_release<T, F>&) = delete;
+    auto_release(auto_release<T, F>&&) = default;
+    ~auto_release() {
+        if (valid) release_func(handle);
+    }
+};
 
 struct stbi_img {
     std::uint8_t* data = nullptr;
     std::size_t width = 0;
     std::size_t height = 0;
 };
+
 static std::optional<stbi_img> open_image(std::string_view filename) {
     bool use_stdin = filename == "-";
 
@@ -60,36 +77,36 @@ int main(int argc, char* argv[]) {
     spdlog::set_level(spdlog::level::critical);
 
     // argument processing
-    argparse::ArgumentParser program(argv[0], "2.0");
+    argparse::ArgumentParser argparse(argv[0], "2.0");
 
-    program.add_argument("-f", "--filetype")
-        .help("Filetype of output. Valid choices are those as supported by DevIL 1.7.8.")
+    argparse.add_argument("-f", "--filetype")
+        .help("Filetype of output. Supoprted types are PNG, JPEG, TGA, BMP")
         .default_value("png");
 
-    program.add_argument("-q", "--quality")
+    argparse.add_argument("-q", "--quality")
         .help("Quality of output file in a range from 0 to 100. Only used for JPEG output.")
         .default_value(100);
 
-    program.add_argument("-s", "--spread")
+    argparse.add_argument("-s", "--spread")
         .help("Spread radius in pixels for when mapping distance values to image brightness.")
         .default_value(64);
 
-    program.add_argument("-a", "--asymmetric")
+    argparse.add_argument("-a", "--asymmetric")
         .help("SDF will be asymmetrically mapped to output. N: [-S,+S]-->[0,255]; Y: [0,S]-->[0,255]")
         .default_value(false)
         .implicit_value(true);
 
-    program.add_argument("-l", "--luminence")
+    argparse.add_argument("-l", "--luminence")
         .help("SDF will be calculated from luminence chanel, as opposed to the alpha channel.")
         .default_value(false)
         .implicit_value(true);
 
-    program.add_argument("-i", "--invert")
+    argparse.add_argument("-i", "--invert")
         .help("Invert pixel value test. If set, values BELOW middle grey will be counted as \"inside\".")
         .default_value(false)
         .implicit_value(true);
 
-    program.add_argument("--log-level")
+    argparse.add_argument("--log-level")
         .help("Log level. Possible values: trace, debug, info, warn, err, critical, off.")
         .default_value("error")
         .action([](std::string value) {
@@ -99,28 +116,28 @@ int main(int argc, char* argv[]) {
             return spdlog::level::from_str(value);
         });
 
-    program.add_argument("input_file")
+    argparse.add_argument("input_file")
         .help("Input filename. Specify \"-\" (without the quotation marks) to read from stdin.");
-    program.add_argument("output_file")
+    argparse.add_argument("output_file")
         .help("Output filename. Specify \"-\" (without the quotation marks) to output to stdout.");
 
     try {
-        program.parse_args(argc, argv);
+        argparse.parse_args(argc, argv);
     } catch (const std::runtime_error& err) {
         spdlog::critical("Failed to parse arguments: {}", err.what());
-        std::cout << program;
+        std::cout << argparse;
         return EXIT_FAILURE;
     }
 
-    auto infile = program.get<std::string>("input_file");
-    auto outfile = program.get<std::string>("output_file");
+    auto infile = argparse.get<std::string>("input_file");
+    auto outfile = argparse.get<std::string>("output_file");
 
     // set log level
-    auto log_level = program.get<spdlog::level::level_enum>("--log-level");
+    auto log_level = argparse.get<spdlog::level::level_enum>("--log-level");
     spdlog::set_level(log_level);
 
     // load image asynchronously
-    auto image_fut = std::async(std::launch::async, open_image, infile);
+    auto image_fut = std::async(open_image, infile);
 
     // opencl setup
     cl_int err;
@@ -182,11 +199,13 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Error creating OpenCL context (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
+    auto_release ctx_release{ctx, clReleaseContext};
 
     // opencl command queue
     cl_command_queue_properties properties[] = {
         CL_QUEUE_PROPERTIES,
         CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE,
+        //
         0,
     };
     queue = clCreateCommandQueueWithProperties(ctx, device, properties, &err);
@@ -194,6 +213,7 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Error creating OpenCL queue (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
+    auto_release queue_release{queue, clReleaseCommandQueue};
 
     // wait on image
     auto image_opt = image_fut.get();
@@ -201,13 +221,72 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Image open failed.");
         return EXIT_FAILURE;
     }
-    auto image = image_opt.value();
+    auto image_s = image_opt.value();
+    auto_release image_release{image_s.data, stbi_image_free};
 
-    // free image load
-    stbi_image_free(image.data);
+    // opencl program
+    const char* sources[] = {
+        &_binary_opencl_sdf_cl_start,
+        nullptr,
+    };
+    const std::size_t lengths[] = {
+        static_cast<std::size_t>(&_binary_opencl_sdf_cl_end - &_binary_opencl_sdf_cl_start),
+        0,
+    };
+    cl_program program = clCreateProgramWithSource(ctx, 1, sources, lengths, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error creating OpenCL program (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release program_release{program, clReleaseProgram};
+    err = clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error building OpenCL program (OpenCL error: {})", err);
+        // if (err == CL_BUILD_PROGRAM_FAILURE) {
+        if (true) {
+            clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &aux_size);
+            aux_str.resize(aux_size / sizeof(char));
+            clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, aux_str.capacity() * sizeof(char),
+                                  aux_str.data(), nullptr);
+            spdlog::info("Build log: {}", aux_str);
+        }
+        return EXIT_FAILURE;
+    }
 
-    clReleaseCommandQueue(queue);
-    clReleaseContext(ctx);
+    // opencl kernel
+    cl_kernel kernel = clCreateKernel(program, "testy", &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error creating OpenCL kernel (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release kernel_release{kernel, clReleaseKernel};
+
+    std::size_t work_size = 1024;
+    err = clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &work_size, nullptr, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error enqueueing NDRange for OpenCL kernel (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+
+    err = clFinish(queue);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Error finishing OpenCL queue (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+
+    // opencl buffers
+    // one for the original image
+    // one for inside, one for outside
+    // auxiliary buffers for both
+    // help me
+
+    // opencl args for inside
+
+    // opencl args for outside
+
+    // enqueues
+
+    // finish
 
     return 0;
 }

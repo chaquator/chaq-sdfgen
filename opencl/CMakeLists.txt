@@ -18,7 +18,8 @@ function(add_resources out_var)
   set(${out_var} "${result}" PARENT_SCOPE)
 endfunction()
 
-add_executable(chaq_sdfgen_opencl main.cpp)
+add_resources(CL_TEXT sdf.cl)
+add_executable(chaq_sdfgen_opencl main.cpp ${CL_TEXT})
 
 set_target_properties(
   chaq_sdfgen_opencl
