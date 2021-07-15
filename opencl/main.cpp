@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <optional>
@@ -17,8 +18,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_FAILURE_USERMSG
 #include <stb/stb_image.h>
-
-extern const char _binary_opencl_sdf_cl_start, _binary_opencl_sdf_cl_end;
 
 // small helper class that gives raii semantics for trivial handles that are already acquired
 template <typename T, typename F>
@@ -71,6 +70,26 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
         static_cast<std::size_t>(w),
         static_cast<std::size_t>(h),
     }};
+}
+
+// based on code from https://insanecoding.blogspot.com/2011/11/how-to-read-in-file-in-c.html
+static std::optional<std::string> get_file_contents(const char* filename) {
+    std::ifstream in{filename, std::ios_base::in | std::ios_base::binary};
+
+    if (!in) {
+        spdlog::error("Failed to open file \"{}\"", filename);
+        return {};
+    }
+
+    std::string contents;
+
+    in.seekg(0, std::ios::end);
+    contents.resize(in.tellg());
+    in.seekg(0, std::ios::beg);
+
+    in.read(contents.data(), contents.size());
+
+    return contents;
 }
 
 int main(int argc, char* argv[]) {
@@ -139,7 +158,10 @@ int main(int argc, char* argv[]) {
     // load image asynchronously
     auto image_fut = std::async(open_image, infile);
 
-    // opencl setup
+    // load shader content asynchronously
+    auto shader_fut = std::async(get_file_contents, "sdf.cl");
+
+    // opencl setupet
     cl_int err;
     cl_platform_id platform;
     cl_device_id device;
@@ -215,25 +237,18 @@ int main(int argc, char* argv[]) {
     }
     auto_release queue_release{queue, clReleaseCommandQueue};
 
-    // wait on image
-    auto image_opt = image_fut.get();
-    if (!image_opt) {
-        spdlog::critical("Image open failed.");
+    // get shader string
+    auto shader_opt = shader_fut.get();
+    if (!shader_opt) {
+        spdlog::critical("Could not find shader file.");
         return EXIT_FAILURE;
     }
-    auto image_s = image_opt.value();
-    auto_release image_release{image_s.data, stbi_image_free};
+    auto shader_str = shader_opt.value();
 
-    // opencl program
-    const char* sources[] = {
-        &_binary_opencl_sdf_cl_start,
-        nullptr,
-    };
-    const std::size_t lengths[] = {
-        static_cast<std::size_t>(&_binary_opencl_sdf_cl_end - &_binary_opencl_sdf_cl_start),
-        0,
-    };
-    cl_program program = clCreateProgramWithSource(ctx, 1, sources, lengths, &err);
+    // opencl shader program
+    const char* src = shader_str.data();
+    const std::size_t len = shader_str.length();
+    cl_program program = clCreateProgramWithSource(ctx, 1, &src, &len, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error creating OpenCL program (OpenCL error: {})", err);
         return EXIT_FAILURE;
@@ -242,14 +257,11 @@ int main(int argc, char* argv[]) {
     err = clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error building OpenCL program (OpenCL error: {})", err);
-        // if (err == CL_BUILD_PROGRAM_FAILURE) {
-        if (true) {
-            clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &aux_size);
-            aux_str.resize(aux_size / sizeof(char));
-            clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, aux_str.capacity() * sizeof(char),
-                                  aux_str.data(), nullptr);
-            spdlog::info("Build log: {}", aux_str);
-        }
+        clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &aux_size);
+        aux_str.resize(aux_size / sizeof(char));
+        clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, aux_str.capacity() * sizeof(char), aux_str.data(),
+                              nullptr);
+        spdlog::info("Build log: {}", aux_str);
         return EXIT_FAILURE;
     }
 
@@ -260,6 +272,15 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     auto_release kernel_release{kernel, clReleaseKernel};
+
+    // wait on image
+    auto image_opt = image_fut.get();
+    if (!image_opt) {
+        spdlog::critical("Image open failed.");
+        return EXIT_FAILURE;
+    }
+    auto image_s = image_opt.value();
+    auto_release image_release{image_s.data, stbi_image_free};
 
     std::size_t work_size = 1024;
     err = clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &work_size, nullptr, 0, nullptr, nullptr);
