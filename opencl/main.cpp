@@ -9,9 +9,6 @@
 #include <string>
 #include <string_view>
 
-#include <any>
-#include <vector>
-
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
 
@@ -146,7 +143,6 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    auto infile = argparse.get<std::string>("input_file");
     auto outfile = argparse.get<std::string>("output_file");
 
     // set log level
@@ -156,6 +152,7 @@ int main(int argc, char* argv[]) {
     spdlog::set_level(spdlog::level::from_str(log_level));
 
     // load image asynchronously
+    auto infile = argparse.get<std::string>("input_file");
     auto image_fut = std::async(open_image, infile);
 
     // load shader content asynchronously
@@ -282,6 +279,7 @@ int main(int argc, char* argv[]) {
     auto image_s = image_opt.value();
     auto_release image_release{image_s.data, stbi_image_free};
 
+    /*
     std::size_t work_size = 2048;
     err = clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &work_size, nullptr, 0, nullptr, nullptr);
     if (err != CL_SUCCESS) {
@@ -294,40 +292,93 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Error finishing OpenCL queue (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
+    */
 
-    // TODO: dont bother with task flow for inside image if asymmetric flag is set
+    // TODO: skip task flow for inside image if asymmetric flag is set
 
     // opencl buffers
-    std::size_t img_size_bytes = image_s.height * image_s.width * sizeof(std::uint8_t);
+    std::size_t img_size_base = image_s.height * image_s.width;
+    std::size_t img_size_bytes = img_size_base * sizeof(std::uint8_t);
+    std::size_t max_dim = image_s.height > image_s.width ? image_s.height : image_s.width;
+    std::size_t work_group_size;
 
-    // outside image
-    cl_mem img_outside, img_inside;
-    img_outside = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
+    err = clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(std::size_t), &work_group_size,
+                                   nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Could not create image buffer (OpenCL error: {})", err);
+        spdlog::critical("Failed to query kernel work group size (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
-    auto_release img_outside_release{img_outside, clReleaseMemObject};
 
-    // inside image
-    img_inside = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
+    // buffers declared for each side
+    // image buffer -- image_size_bytes
+    // intermediate transpose float image -- image_size_base * sizeof(float)
+    // output distance function float image -- image_size_base * sizeof(float)
+    // aux vertices buffer -- max_dim * work group size * sizeof(std::size_t)
+    // aux vertex height buffer -- max_dim * work group size * sizeof(float)
+    // aux break point buffer -- (max_dim-1) * work group size * sizeof(std::size_t)
+
+    // after computing both distance functions, will consolidate the results and
+    // write back to image buffer for outside
+
+    // outside
+    // image buffer
+    cl_mem img_buffer = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Could not create image buffer (OpenCL error: {})", err);
+        spdlog::critical("Could not create outside image buffer (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
-    auto_release img_inside_release{img_inside, clReleaseMemObject};
+    auto_release img_buffer_release{img_buffer, clReleaseMemObject};
+    // intermediate transpose flaot image
+    cl_mem intermediate_transpose =
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_base * sizeof(float), nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Could not create outside image intermediate transpose buffer (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release intermediate_transpose_release{intermediate_transpose, clReleaseMemObject};
+    // output distance function float image
+    cl_mem dist_func = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, img_size_base * sizeof(float), nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Could not create outside distance function output buffer (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release dist_func_release{dist_func, clReleaseMemObject};
+    // aux vertices buffer
+    cl_mem vertices =
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, max_dim * work_group_size * sizeof(std::size_t), nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Could not create outside vertices buffer (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release vertices_release{vertices, clRetainMemObject};
+    // aux vertex height buffer
+    cl_mem vert_height =
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, max_dim * work_group_size * sizeof(float), nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Could not create outside vertex height buffer (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release vert_height_release{vert_height, clReleaseMemObject};
+    // aux break point buffer
+    cl_mem breakpoint =
+        clCreateBuffer(ctx, CL_MEM_READ_WRITE, (max_dim - 1) * work_group_size * sizeof(std::size_t), nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Could not create outside breakpoint buffer (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release breakpoint_release{breakpoint, clReleaseMemObject};
 
-    // auxiliary buffers for both
-    // figure out work group size --> n
-    // allocate n * max(w, h) space
-    // in the kernel, index by local id
-    // opencl args for inside
-
-    // opencl args for outside
+    // opencl arguments
 
     // enqueues
+    // buffer write
+    // taskflow
+    // buffer read back
 
     // finish
+
+    // TODO: once taskflow for distance transform works for at least one side, wrap up into struct and function
+    // to make repeating code for other side easier
 
     return EXIT_SUCCESS;
 }

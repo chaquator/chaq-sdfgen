@@ -115,7 +115,7 @@ static enum FILETYPE read_filetype(const char* string) {
 }
 
 static void write_to_stdout(void* context, void* data, int size) {
-    (void)(context); // GO AWAY WARNING
+    (void)(context);
     fwrite(data, (size_t)size, 1, stdout);
 }
 
