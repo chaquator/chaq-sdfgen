@@ -9,6 +9,9 @@
 #include <string>
 #include <string_view>
 
+#include <any>
+#include <vector>
+
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
 
@@ -23,17 +26,18 @@
 template <typename T, typename F>
 class auto_release {
   private:
-    T handle = {};
+    T hndl = {};
     F release_func = {};
     bool valid = false;
 
   public:
+    const T handle() const { return hndl; }
     auto_release() = default;
-    auto_release(T h, F f) : handle(h), release_func(f), valid(true) {}
+    auto_release(T h, F f) : hndl(h), release_func(f), valid(true) {}
     auto_release(auto_release<T, F>&) = delete;
     auto_release(auto_release<T, F>&&) = default;
     ~auto_release() {
-        if (valid) release_func(handle);
+        if (valid) release_func(hndl);
     }
 };
 
@@ -126,14 +130,8 @@ int main(int argc, char* argv[]) {
         .implicit_value(true);
 
     argparse.add_argument("--log-level")
-        .help("Log level. Possible values: trace, debug, info, warn, err, critical, off.")
-        .default_value("error")
-        .action([](std::string value) {
-            // transform to lower-case
-            std::transform(value.cbegin(), value.cend(), value.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-            return spdlog::level::from_str(value);
-        });
+        .help("Log level. Possible values: trace, debug, info, warning, error, critical, off.")
+        .default_value(std::string("error"));
 
     argparse.add_argument("input_file")
         .help("Input filename. Specify \"-\" (without the quotation marks) to read from stdin.");
@@ -152,8 +150,10 @@ int main(int argc, char* argv[]) {
     auto outfile = argparse.get<std::string>("output_file");
 
     // set log level
-    auto log_level = argparse.get<spdlog::level::level_enum>("--log-level");
-    spdlog::set_level(log_level);
+    std::string log_level = argparse.get<std::string>("--log-level");
+    std::transform(log_level.cbegin(), log_level.cend(), log_level.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    spdlog::set_level(spdlog::level::from_str(log_level));
 
     // load image asynchronously
     auto image_fut = std::async(open_image, infile);
@@ -161,7 +161,7 @@ int main(int argc, char* argv[]) {
     // load shader content asynchronously
     auto shader_fut = std::async(get_file_contents, "sdf.cl");
 
-    // opencl setupet
+    // opencl setup
     cl_int err;
     cl_platform_id platform;
     cl_device_id device;
@@ -199,7 +199,7 @@ int main(int argc, char* argv[]) {
     spdlog::info("OpenCL platform version: {}", aux_str);
 
     // opencl device
-    clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr);
+    err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error getting OpenCL device ID (OpenCL error: {})", err);
         return EXIT_FAILURE;
@@ -282,7 +282,7 @@ int main(int argc, char* argv[]) {
     auto image_s = image_opt.value();
     auto_release image_release{image_s.data, stbi_image_free};
 
-    std::size_t work_size = 1024;
+    std::size_t work_size = 2048;
     err = clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &work_size, nullptr, 0, nullptr, nullptr);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error enqueueing NDRange for OpenCL kernel (OpenCL error: {})", err);
@@ -295,12 +295,32 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    // opencl buffers
-    // one for the original image
-    // one for inside, one for outside
-    // auxiliary buffers for both
-    // help me
+    // TODO: dont bother with task flow for inside image if asymmetric flag is set
 
+    // opencl buffers
+    std::size_t img_size_bytes = image_s.height * image_s.width * sizeof(std::uint8_t);
+
+    // outside image
+    cl_mem img_outside, img_inside;
+    img_outside = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Could not create image buffer (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release img_outside_release{img_outside, clReleaseMemObject};
+
+    // inside image
+    img_inside = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Could not create image buffer (OpenCL error: {})", err);
+        return EXIT_FAILURE;
+    }
+    auto_release img_inside_release{img_inside, clReleaseMemObject};
+
+    // auxiliary buffers for both
+    // figure out work group size --> n
+    // allocate n * max(w, h) space
+    // in the kernel, index by local id
     // opencl args for inside
 
     // opencl args for outside
@@ -309,5 +329,5 @@ int main(int argc, char* argv[]) {
 
     // finish
 
-    return 0;
+    return EXIT_SUCCESS;
 }

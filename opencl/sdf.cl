@@ -36,5 +36,5 @@ kernel void testy() {
     size_t gid = get_global_id(0);
     size_t lid = get_local_id(0);
     size_t grid = get_group_id(0);
-    printf("%u\n", gid);
+    // printf("%u\n", lid);
 }
