@@ -32,7 +32,11 @@ class auto_release {
     auto_release() = default;
     auto_release(T h, F f) : hndl(h), release_func(f), valid(true) {}
     auto_release(auto_release<T, F>&) = delete;
-    auto_release(auto_release<T, F>&&) = default;
+    auto_release(auto_release<T, F>&& other) {
+        std::swap(hndl, other.hndl);
+        std::swap(release_func, other.release_func);
+        std::swap(valid, other.valid);
+    }
     ~auto_release() {
         if (valid) release_func(hndl);
     }
