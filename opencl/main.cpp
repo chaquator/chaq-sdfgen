@@ -79,6 +79,7 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
 
 // based on code from https://insanecoding.blogspot.com/2011/11/how-to-read-in-file-in-c.html
 static std::optional<std::string> get_file_contents(const char* filename) {
+    spdlog::trace("Opening file {}", filename);
     std::ifstream in{filename, std::ios_base::in | std::ios_base::binary};
 
     if (!in) {
@@ -168,6 +169,8 @@ int main(int argc, char* argv[]) {
     cl_device_id device;
     cl_context ctx;
     cl_command_queue queue;
+    cl_program program;
+    cl_kernel kernel;
 
     std::size_t aux_size;
     std::string aux_str;
@@ -178,6 +181,7 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Error getting platform ID (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
+    spdlog::trace("Got OpenCL platform");
 
     // opencl platform name
     clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &aux_size);
@@ -205,6 +209,7 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Error getting OpenCL device ID (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
+    spdlog::trace("Got OpenCL device");
 
     // opencl device name
     clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &aux_size);
@@ -223,6 +228,7 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     auto_release ctx_release{ctx, clReleaseContext};
+    spdlog::trace("Created OpenCL context");
 
     // opencl command queue
     cl_command_queue_properties properties[] = {
@@ -237,24 +243,27 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     auto_release queue_release{queue, clReleaseCommandQueue};
+    spdlog::trace("Created OpenCL command queue");
 
     // get shader string
+    spdlog::trace("Waiting on shader string");
     auto shader_opt = shader_fut.get();
     if (!shader_opt) {
         spdlog::critical("Could not find shader file.");
         return EXIT_FAILURE;
     }
-    auto shader_str = shader_opt.value();
+    const char* src = shader_opt->data();
+    const std::size_t len = shader_opt->length();
+    spdlog::trace("Got shader string");
 
     // opencl shader program
-    const char* src = shader_str.data();
-    const std::size_t len = shader_str.length();
-    cl_program program = clCreateProgramWithSource(ctx, 1, &src, &len, &err);
+    program = clCreateProgramWithSource(ctx, 1, &src, &len, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error creating OpenCL program (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     auto_release program_release{program, clReleaseProgram};
+    spdlog::trace("Created OpenCL program");
     err = clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error building OpenCL program (OpenCL error: {})", err);
@@ -265,23 +274,27 @@ int main(int argc, char* argv[]) {
         spdlog::info("Build log: {}", aux_str);
         return EXIT_FAILURE;
     }
+    spdlog::trace("Built OpenCL program");
 
     // opencl kernel
-    cl_kernel kernel = clCreateKernel(program, "testy", &err);
+    kernel = clCreateKernel(program, "testy", &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error creating OpenCL kernel (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     auto_release kernel_release{kernel, clReleaseKernel};
+    spdlog::trace("Created OpenCL kernel");
 
     // wait on image
+    spdlog::trace("Waiting on image data");
     auto image_opt = image_fut.get();
     if (!image_opt) {
         spdlog::critical("Image open failed.");
         return EXIT_FAILURE;
     }
-    auto image_s = image_opt.value();
-    auto_release image_release{image_s.data, stbi_image_free};
+    auto image = image_opt.value();
+    auto_release image_release{image.data, stbi_image_free};
+    spdlog::trace("Got image data");
 
     /*
     std::size_t work_size = 2048;
@@ -301,10 +314,12 @@ int main(int argc, char* argv[]) {
     // TODO: skip task flow for inside image if asymmetric flag is set
 
     // opencl buffers
-    std::size_t img_size_base = image_s.height * image_s.width;
+    std::size_t img_size_base = image.height * image.width;
     std::size_t img_size_bytes = img_size_base * sizeof(std::uint8_t);
-    std::size_t max_dim = image_s.height > image_s.width ? image_s.height : image_s.width;
+    std::size_t max_dim = image.height > image.width ? image.height : image.width;
     std::size_t work_group_size;
+    spdlog::trace("Image size in bytes: {}", img_size_bytes);
+    spdlog::trace("Max dimension: {}", max_dim);
 
     err = clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(std::size_t), &work_group_size,
                                    nullptr);
@@ -312,6 +327,7 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Failed to query kernel work group size (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
+    spdlog::trace("OpenCL kernel work group size: {}", work_group_size);
 
     // buffers declared for each side
     // image buffer -- image_size_bytes
@@ -324,47 +340,52 @@ int main(int argc, char* argv[]) {
     // after computing both distance functions, will consolidate the results and
     // write back to image buffer for outside
 
+    cl_mem img_buffer;
+    cl_mem intermediate_transpose;
+    cl_mem dist_func;
+    cl_mem vertices;
+    cl_mem vert_height;
+    cl_mem breakpoint;
+
     // outside
     // image buffer
-    cl_mem img_buffer = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
+    spdlog::trace("Creating OpenCL buffers");
+    img_buffer = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Could not create outside image buffer (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     auto_release img_buffer_release{img_buffer, clReleaseMemObject};
     // intermediate transpose flaot image
-    cl_mem intermediate_transpose =
-        clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_base * sizeof(float), nullptr, &err);
+    intermediate_transpose = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_base * sizeof(float), nullptr, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Could not create outside image intermediate transpose buffer (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     auto_release intermediate_transpose_release{intermediate_transpose, clReleaseMemObject};
     // output distance function float image
-    cl_mem dist_func = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, img_size_base * sizeof(float), nullptr, &err);
+    dist_func = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, img_size_base * sizeof(float), nullptr, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Could not create outside distance function output buffer (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     auto_release dist_func_release{dist_func, clReleaseMemObject};
     // aux vertices buffer
-    cl_mem vertices =
-        clCreateBuffer(ctx, CL_MEM_READ_WRITE, max_dim * work_group_size * sizeof(std::size_t), nullptr, &err);
+    vertices = clCreateBuffer(ctx, CL_MEM_READ_WRITE, max_dim * work_group_size * sizeof(std::size_t), nullptr, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Could not create outside vertices buffer (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     auto_release vertices_release{vertices, clRetainMemObject};
     // aux vertex height buffer
-    cl_mem vert_height =
-        clCreateBuffer(ctx, CL_MEM_READ_WRITE, max_dim * work_group_size * sizeof(float), nullptr, &err);
+    vert_height = clCreateBuffer(ctx, CL_MEM_READ_WRITE, max_dim * work_group_size * sizeof(float), nullptr, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Could not create outside vertex height buffer (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     auto_release vert_height_release{vert_height, clReleaseMemObject};
     // aux break point buffer
-    cl_mem breakpoint =
+    breakpoint =
         clCreateBuffer(ctx, CL_MEM_READ_WRITE, (max_dim - 1) * work_group_size * sizeof(std::size_t), nullptr, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Could not create outside breakpoint buffer (OpenCL error: {})", err);
