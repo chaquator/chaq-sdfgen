@@ -23,22 +23,34 @@
 template <typename T, typename F>
 class auto_release {
   private:
-    T hndl = {};
-    F release_func = {};
-    bool valid = false;
+    T m_handle = {};
+    F m_release_func = {};
+    bool m_valid = false;
 
   public:
-    const T handle() const { return hndl; }
+    const T handle() const { return m_handle; }
+    const F release_function() const { return m_release_func; }
+    bool valid() const { return m_valid; }
+
+    void invalidate() { m_valid = false; }
+
     auto_release() = default;
-    auto_release(T h, F f) : hndl(h), release_func(f), valid(true) {}
-    auto_release(auto_release<T, F>&) = delete;
+    auto_release(T h, F f) : m_handle(h), m_release_func(f), m_valid(true) {}
     auto_release(auto_release<T, F>&& other) {
-        std::swap(hndl, other.hndl);
-        std::swap(release_func, other.release_func);
-        std::swap(valid, other.valid);
+        std::swap(m_handle, other.m_handle);
+        std::swap(m_release_func, other.m_release_func);
+        std::swap(m_valid, other.m_valid);
     }
+    auto_release<T, F>& operator=(auto_release<T, F>&& other) {
+        std::swap(m_handle, other.m_handle);
+        std::swap(m_release_func, other.m_release_func);
+        std::swap(m_valid, other.m_valid);
+        return *this;
+    };
+    auto_release(auto_release<T, F>&) = delete;
+    auto_release<T, F>& operator=(const auto_release<T, F>&) = delete;
     ~auto_release() {
-        if (valid) release_func(hndl);
+        if (m_valid) m_release_func(m_handle);
     }
 };
 
