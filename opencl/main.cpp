@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
@@ -18,6 +19,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_FAILURE_USERMSG
 #include <stb/stb_image.h>
+
+#include <iostream>
 
 // small helper class that gives raii semantics for trivial handles that are already acquired
 template <typename T, typename F>
@@ -107,7 +110,43 @@ static std::optional<std::string> get_file_contents(const char* filename) {
 
     in.read(contents.data(), contents.size());
 
-    return contents;
+    return std::make_optional(std::move(contents));
+}
+
+static std::optional<std::vector<cl_platform_id>> get_platforms() {
+    cl_int err;
+    spdlog::trace("Listing platforms");
+    cl_uint num_platforms;
+    err = clGetPlatformIDs(0, nullptr, &num_platforms);
+    if (err != CL_SUCCESS) {
+        spdlog::error("Error listing platforms (OpenCL error: {})", err);
+        return {};
+    }
+    std::vector<cl_platform_id> platforms(num_platforms);
+    err = clGetPlatformIDs(num_platforms, platforms.data(), nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::error("Error listing platforms (OpenCL error: {})", err);
+        return {};
+    }
+    return std::make_optional(std::move(platforms));
+}
+
+static std::optional<std::string> get_platform_name(cl_platform_id platform) {
+    cl_int err;
+    std::size_t plat_name_size;
+    err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &plat_name_size);
+    if (err != CL_SUCCESS) {
+        spdlog::error("Error getting platform name for {} (OpenCL error: {})", static_cast<void*>(platform), err);
+        return {};
+    }
+    std::string plat_name;
+    plat_name.resize(plat_name_size);
+    err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, plat_name.capacity(), plat_name.data(), nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::error("Error getting platform name for {} (OpenCL error: {})", static_cast<void*>(platform), err);
+        return {};
+    }
+    return std::make_optional(std::move(plat_name));
 }
 
 int main(int argc, char* argv[]) {
@@ -118,38 +157,53 @@ int main(int argc, char* argv[]) {
 
     argparse.add_argument("-f", "--filetype")
         .help("Filetype of output. Supoprted types are PNG, JPEG, TGA, BMP")
+        .nargs(1)
         .default_value("png");
 
     argparse.add_argument("-q", "--quality")
         .help("Quality of output file in a range from 0 to 100. Only used for JPEG output.")
+        .nargs(1)
         .default_value(100);
 
     argparse.add_argument("-s", "--spread")
         .help("Spread radius in pixels for when mapping distance values to image brightness.")
+        .nargs(1)
         .default_value(64);
 
     argparse.add_argument("-a", "--asymmetric")
         .help("SDF will be asymmetrically mapped to output. N: [-S,+S]-->[0,255]; Y: [0,S]-->[0,255]")
+        .nargs(0)
         .default_value(false)
         .implicit_value(true);
 
     argparse.add_argument("-l", "--luminence")
         .help("SDF will be calculated from luminence chanel, as opposed to the alpha channel.")
+        .nargs(0)
         .default_value(false)
         .implicit_value(true);
 
-    argparse.add_argument("-i", "--invert")
+    argparse.add_argument("-n", "--invert")
         .help("Invert pixel value test. If set, values BELOW middle grey will be counted as \"inside\".")
+        .nargs(0)
+        .default_value(false)
+        .implicit_value(true);
+
+    argparse.add_argument("--list-platforms")
+        .help("List all platforms on machine by name then exits.")
+        .nargs(0)
         .default_value(false)
         .implicit_value(true);
 
     argparse.add_argument("--log-level")
         .help("Log level. Possible values: trace, debug, info, warning, error, critical, off.")
+        .nargs(1)
         .default_value(std::string("error"));
 
-    argparse.add_argument("input_file")
+    argparse.add_argument("-i", "--input")
+        .nargs(1)
         .help("Input filename. Specify \"-\" (without the quotation marks) to read from stdin.");
-    argparse.add_argument("output_file")
+    argparse.add_argument("-o", "--output")
+        .nargs(1)
         .help("Output filename. Specify \"-\" (without the quotation marks) to output to stdout.");
 
     try {
@@ -160,16 +214,39 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    auto outfile = argparse.get<std::string>("output_file");
-
     // set log level
     std::string log_level = argparse.get<std::string>("--log-level");
     std::transform(log_level.cbegin(), log_level.cend(), log_level.begin(),
                    [](unsigned char c) { return std::tolower(c); });
     spdlog::set_level(spdlog::level::from_str(log_level));
 
+    // if list-platforms or list-devices is specified, process accordingly and then exit
+    if (argparse["--list-platforms"] == true) {
+        auto platforms_opt = get_platforms();
+        if (!platforms_opt) {
+            spdlog::critical("Could not get platforms!");
+            return EXIT_FAILURE;
+        }
+        auto& platforms = *platforms_opt;
+        for (const auto& p : platforms) {
+            auto name_opt = get_platform_name(p);
+            if (!name_opt) {
+                spdlog::critical("Failed to get platform name of {}", static_cast<void*>(p));
+                return EXIT_FAILURE;
+            }
+            auto& name = name_opt.value();
+            std::cout << name << '\n';
+        }
+
+        return EXIT_SUCCESS;
+    }
+
     // load image asynchronously
-    auto infile = argparse.get<std::string>("input_file");
+    if (!argparse.present("--input")) {
+        spdlog::critical("Input file is required");
+        return EXIT_FAILURE;
+    }
+    auto infile = argparse.get<std::string>("--input");
     auto image_fut = std::async(open_image, infile);
 
     // load shader content asynchronously
@@ -178,14 +255,15 @@ int main(int argc, char* argv[]) {
     // opencl setup
     cl_int err;
     cl_platform_id platform;
+
+    std::size_t aux_size;
+    std::string aux_str;
+
     cl_device_id device;
     cl_context ctx;
     cl_command_queue queue;
     cl_program program;
     cl_kernel kernel;
-
-    std::size_t aux_size;
-    std::string aux_str;
 
     // opencl platform
     err = clGetPlatformIDs(1, &platform, nullptr);
