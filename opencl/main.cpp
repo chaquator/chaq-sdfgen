@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <future>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,8 +20,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_FAILURE_USERMSG
 #include <stb/stb_image.h>
-
-#include <iostream>
 
 // small helper class that gives raii semantics for trivial handles that are already acquired
 template <typename T, typename F>
@@ -119,13 +118,13 @@ static std::optional<std::vector<cl_platform_id>> get_platforms() {
     cl_uint num_platforms;
     err = clGetPlatformIDs(0, nullptr, &num_platforms);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error listing platforms (OpenCL error: {})", err);
+        spdlog::error("Error listing OpenCL platforms (OpenCL error: {})", err);
         return {};
     }
     std::vector<cl_platform_id> platforms(num_platforms);
     err = clGetPlatformIDs(num_platforms, platforms.data(), nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error listing platforms (OpenCL error: {})", err);
+        spdlog::error("Error listing OpenCL platforms (OpenCL error: {})", err);
         return {};
     }
     return std::make_optional(std::move(platforms));
@@ -136,14 +135,16 @@ static std::optional<std::string> get_platform_name(cl_platform_id platform) {
     std::size_t plat_name_size;
     err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &plat_name_size);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting platform name for {} (OpenCL error: {})", static_cast<void*>(platform), err);
+        spdlog::error("Error getting OpenCL platform name for {} (OpenCL error: {})", static_cast<void*>(platform),
+                      err);
         return {};
     }
     std::string plat_name;
     plat_name.resize(plat_name_size);
     err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, plat_name.capacity(), plat_name.data(), nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting platform name for {} (OpenCL error: {})", static_cast<void*>(platform), err);
+        spdlog::error("Error getting OpenCL platform name for {} (OpenCL error: {})", static_cast<void*>(platform),
+                      err);
         return {};
     }
     return std::make_optional(std::move(plat_name));
@@ -194,6 +195,11 @@ int main(int argc, char* argv[]) {
         .default_value(false)
         .implicit_value(true);
 
+    argparse.add_argument("--platform")
+        .nargs(1)
+        .help(
+            "Choose platform by name. Use --list-platforms to view platform names. Chooses first platform otherwise.");
+
     argparse.add_argument("--log-level")
         .help("Log level. Possible values: trace, debug, info, warning, error, critical, off.")
         .nargs(1)
@@ -224,17 +230,17 @@ int main(int argc, char* argv[]) {
     if (argparse["--list-platforms"] == true) {
         auto platforms_opt = get_platforms();
         if (!platforms_opt) {
-            spdlog::critical("Could not get platforms!");
+            spdlog::critical("Could not get OpenCL platforms");
             return EXIT_FAILURE;
         }
         auto& platforms = *platforms_opt;
         for (const auto& p : platforms) {
             auto name_opt = get_platform_name(p);
             if (!name_opt) {
-                spdlog::critical("Failed to get platform name of {}", static_cast<void*>(p));
-                return EXIT_FAILURE;
+                spdlog::error("Failed to get OpenCL platform name of {}, skipping.", static_cast<void*>(p));
+                continue;
             }
-            auto& name = name_opt.value();
+            auto& name = *name_opt;
             std::cout << name << '\n';
         }
 
@@ -266,10 +272,46 @@ int main(int argc, char* argv[]) {
     cl_kernel kernel;
 
     // opencl platform
-    err = clGetPlatformIDs(1, &platform, nullptr);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Error getting platform ID (OpenCL error: {})", err);
-        return EXIT_FAILURE;
+    if (argparse.present("--platform")) {
+        // find platform by name
+        auto plats_opt = get_platforms();
+        if (!plats_opt) {
+            spdlog::critical("Could not get OpenCL platforms");
+            return EXIT_FAILURE;
+        }
+
+        auto& platforms = *plats_opt;
+        const auto& plat_name = argparse.get<std::string>("--platform");
+
+        spdlog::trace("Looking for OpenCL platform with name \"{}\"", plat_name);
+
+        auto find = std::find_if(platforms.cbegin(), platforms.cend(), [&plat_name](const auto& p) {
+            auto p_name_opt = get_platform_name(p);
+            if (!p_name_opt) {
+                spdlog::error("Failed to get OpenCL platform name for {}, skipping.", static_cast<void*>(p));
+                return false;
+            }
+            const auto& p_name = *p_name_opt;
+
+            spdlog::trace("Looking at OpenCL platform \"{}\"", p_name);
+
+            auto find_pos = p_name.find(plat_name);
+            spdlog::trace("\"{}\".find(\"{}\"): {}", p_name, plat_name, find_pos);
+            return find_pos != std::string::npos;
+        });
+        if (find == platforms.cend()) {
+            spdlog::critical("Could not find OpenCL platform with name \"{}\"", plat_name);
+            return EXIT_FAILURE;
+        }
+
+        platform = *find;
+    } else {
+        // get first available platform
+        err = clGetPlatformIDs(1, &platform, nullptr);
+        if (err != CL_SUCCESS) {
+            spdlog::critical("Error getting platform ID (OpenCL error: {})", err);
+            return EXIT_FAILURE;
+        }
     }
     spdlog::trace("Got OpenCL platform");
 
@@ -382,7 +424,7 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Image open failed.");
         return EXIT_FAILURE;
     }
-    auto image = image_opt.value();
+    auto image = *image_opt;
     auto_release image_release{image.data, stbi_image_free};
     spdlog::trace("Got image data");
 
