@@ -7,9 +7,9 @@
 
 // intersection of 2 parabolas, not defined if both parabolas have vertex y's at infinity
 static float parabola_intersect(float* restrict f, size_t p, size_t q) {
-    float fp = (float)p;
-    float fq = (float)q;
-    return ((f[q] - f[p]) + ((fq * fq) - (fp * fp))) / (2 * (fq - fp));
+    float p_float = (float)p;
+    float q_float = (float)q;
+    return ((f[q] - f[p]) + ((q_float * q_float) - (p_float * p_float))) / (2 * (q_float - p_float));
 }
 
 // Compute euclidean distance transform in 1d using passed in buffers
