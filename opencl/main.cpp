@@ -60,6 +60,7 @@ struct stbi_img {
     cl_uchar* data = nullptr;
     cl_ulong width = 0;
     cl_ulong height = 0;
+    cl_ulong bytes_per_pixel = 2;
 };
 
 static std::optional<stbi_img> open_image(std::string_view filename) {
@@ -88,26 +89,29 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
         static_cast<cl_uchar*>(stbi_data),
         static_cast<cl_ulong>(w),
         static_cast<cl_ulong>(h),
+        2,
     }};
 }
 
 // based on code from https://insanecoding.blogspot.com/2011/11/how-to-read-in-file-in-c.html
 static std::optional<std::string> get_file_contents(const char* filename) {
     spdlog::trace("Opening file {}", filename);
-    std::ifstream in{filename, std::ios_base::in | std::ios_base::binary};
+    std::ifstream in_file{filename, std::ios_base::in | std::ios_base::binary};
 
-    if (!in) {
+    if (!in_file) {
         spdlog::error("Failed to open file \"{}\"", filename);
         return {};
     }
 
     std::string contents;
 
-    in.seekg(0, std::ios::end);
-    contents.resize(in.tellg());
-    in.seekg(0, std::ios::beg);
+    // fit string to size of file contents
+    in_file.seekg(0, std::ios::end);
+    contents.resize(in_file.tellg());
+    in_file.seekg(0, std::ios::beg);
 
-    in.read(contents.data(), contents.size());
+    // read in data
+    in_file.read(contents.data(), contents.size());
 
     return std::make_optional(std::move(contents));
 }
@@ -115,23 +119,30 @@ static std::optional<std::string> get_file_contents(const char* filename) {
 static std::optional<std::vector<cl_platform_id>> get_platforms() {
     cl_int err;
     spdlog::trace("Listing platforms");
+
+    // get number of platforms
     cl_uint num_platforms;
     err = clGetPlatformIDs(0, nullptr, &num_platforms);
     if (err != CL_SUCCESS) {
         spdlog::error("Error listing OpenCL platforms (OpenCL error: {})", err);
         return {};
     }
+
+    // fill out platforms
     std::vector<cl_platform_id> platforms(num_platforms);
     err = clGetPlatformIDs(num_platforms, platforms.data(), nullptr);
     if (err != CL_SUCCESS) {
         spdlog::error("Error listing OpenCL platforms (OpenCL error: {})", err);
         return {};
     }
+
     return std::make_optional(std::move(platforms));
 }
 
 static std::optional<std::string> get_platform_name(cl_platform_id platform) {
     cl_int err;
+
+    // platform name size
     std::size_t plat_name_size;
     err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &plat_name_size);
     if (err != CL_SUCCESS) {
@@ -139,14 +150,17 @@ static std::optional<std::string> get_platform_name(cl_platform_id platform) {
                       err);
         return {};
     }
+
+    // platform name data
     std::string plat_name;
-    plat_name.resize(plat_name_size);
+    plat_name.resize(plat_name_size - 1);
     err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, plat_name.capacity(), plat_name.data(), nullptr);
     if (err != CL_SUCCESS) {
         spdlog::error("Error getting OpenCL platform name for {} (OpenCL error: {})", static_cast<void*>(platform),
                       err);
         return {};
     }
+
     return std::make_optional(std::move(plat_name));
 }
 
@@ -227,12 +241,14 @@ int main(int argc, char* argv[]) {
     spdlog::set_level(spdlog::level::from_str(log_level));
 
     // if list-platforms or list-devices is specified, process accordingly and then exit
-    if (argparse["--list-platforms"] == true) {
+    bool list_platforms = argparse["--list-platforms"] == true;
+    if (list_platforms) {
         auto platforms_opt = get_platforms();
         if (!platforms_opt) {
             spdlog::critical("Could not get OpenCL platforms");
             return EXIT_FAILURE;
         }
+
         auto& platforms = *platforms_opt;
         for (const auto& p : platforms) {
             auto name_opt = get_platform_name(p);
@@ -240,6 +256,7 @@ int main(int argc, char* argv[]) {
                 spdlog::error("Failed to get OpenCL platform name of {}, skipping.", static_cast<void*>(p));
                 continue;
             }
+
             auto& name = *name_opt;
             std::cout << name << '\n';
         }
@@ -247,6 +264,7 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
+    // asyncrhonously load resoucres while setting up opencl
     // load image asynchronously
     auto input_opt = argparse.present<std::string>("--input");
     if (!input_opt) {
@@ -256,8 +274,8 @@ int main(int argc, char* argv[]) {
     const auto& infile = *input_opt;
     auto image_fut = std::async(open_image, infile);
 
-    // load shader content asynchronously
-    auto shader_fut = std::async(get_file_contents, "sdf.cl");
+    // load source content asynchronously
+    auto source_fut = std::async(get_file_contents, "sdf.cl");
 
     // opencl setup
     cl_int err;
@@ -288,6 +306,7 @@ int main(int argc, char* argv[]) {
         const auto& plat_name = *platform_opt;
         spdlog::trace("Looking for OpenCL platform with name \"{}\"", plat_name);
 
+        // find platform with name of plat_name
         auto name_find = std::find_if(platforms.cbegin(), platforms.cend(), [&plat_name](const auto& p) {
             auto p_name_opt = get_platform_name(p);
             if (!p_name_opt) {
@@ -302,6 +321,7 @@ int main(int argc, char* argv[]) {
             spdlog::trace("\"{}\".find(\"{}\"): {}", p_name, plat_name, find_pos);
             return find_pos != std::string::npos;
         });
+
         if (name_find == platforms.cend()) {
             spdlog::critical("Could not find OpenCL platform with name \"{}\"", plat_name);
             return EXIT_FAILURE;
@@ -329,7 +349,7 @@ int main(int argc, char* argv[]) {
 
     // opencl platform version
     clGetPlatformInfo(platform, CL_PLATFORM_VERSION, 0, nullptr, &aux_size);
-    aux_str.resize(aux_size / sizeof(char));
+    aux_str.resize(aux_size - 1);
     err = clGetPlatformInfo(platform, CL_PLATFORM_VERSION, aux_str.capacity() * sizeof(char), aux_str.data(), nullptr);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error getting OpenCL platform version (OpenCL error: {})", err);
@@ -347,7 +367,7 @@ int main(int argc, char* argv[]) {
 
     // opencl device name
     clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &aux_size);
-    aux_str.resize(aux_size / sizeof(char));
+    aux_str.resize(aux_size - 1);
     err = clGetDeviceInfo(device, CL_DEVICE_NAME, aux_str.capacity() * sizeof(char), aux_str.data(), nullptr);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error getting OpenCL device name (OpenCL error: {})", err);
@@ -379,18 +399,18 @@ int main(int argc, char* argv[]) {
     auto_release queue_release{queue, clReleaseCommandQueue};
     spdlog::trace("Created OpenCL command queue");
 
-    // get shader string
-    spdlog::trace("Waiting on shader string");
-    auto shader_opt = shader_fut.get();
-    if (!shader_opt) {
-        spdlog::critical("Could not find shader file.");
+    // get source string
+    spdlog::trace("Waiting on source string");
+    auto source_opt = source_fut.get();
+    if (!source_opt) {
+        spdlog::critical("Could not find source file.");
         return EXIT_FAILURE;
     }
-    const char* src = shader_opt->data();
-    const std::size_t len = shader_opt->length();
-    spdlog::trace("Got shader string");
+    const char* src = source_opt->data();
+    const std::size_t len = source_opt->length();
+    spdlog::trace("Got source string");
 
-    // opencl shader program
+    // opencl source program
     program = clCreateProgramWithSource(ctx, 1, &src, &len, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error creating OpenCL program (OpenCL error: {})", err);
@@ -402,13 +422,21 @@ int main(int argc, char* argv[]) {
     if (err != CL_SUCCESS) {
         spdlog::critical("Error building OpenCL program (OpenCL error: {})", err);
         clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &aux_size);
-        aux_str.resize(aux_size / sizeof(char));
+        aux_str.resize((aux_size - 1) / sizeof(char));
         clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, aux_str.capacity() * sizeof(char), aux_str.data(),
                               nullptr);
         spdlog::info("Build log: {}", aux_str);
         return EXIT_FAILURE;
     }
     spdlog::trace("Built OpenCL program");
+
+    clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &aux_size);
+    if (aux_size > 2) {
+        aux_str.resize(aux_size - 1);
+        clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, aux_str.capacity() * sizeof(char), aux_str.data(),
+                              nullptr);
+        spdlog::info("Build log: {}", aux_str);
+    }
 
     // opencl kernel
     kernel = clCreateKernel(program, "dist_transform_part1", &err);
@@ -430,104 +458,7 @@ int main(int argc, char* argv[]) {
     auto_release image_release{image.data, stbi_image_free};
     spdlog::trace("Got image data");
 
-    // TODO: skip task flow for inside image if asymmetric flag is set
-
-    // opencl buffers
-    std::size_t img_size_base = image.height * image.width;
-    std::size_t img_size_bytes = img_size_base * sizeof(cl_uchar);
-    spdlog::trace("Image size in bytes: {}", img_size_bytes);
-
-    // buffers declared for each side
-    // image buffer -- image_size_bytes
-    // intermediate transpose float image -- image_size_base * sizeof(float)
-    // output distance function float image -- image_size_base * sizeof(float)
-    // aux vertices buffer -- max_dim * sizeof(std::size_t)
-    // aux vertex height buffer -- max_dim * sizeof(float)
-    // aux break point buffer -- (max_dim-1) * sizeof(float)
-
-    // after computing both distance functions, will consolidate the results and
-    // write back to image buffer for outside
-
-    cl_mem img_buffer;
-    cl_mem intermediate_transpose;
-    // cl_mem dist_func;
-
-    // outside
-    // image buffer
-    spdlog::trace("Creating OpenCL buffers");
-    img_buffer = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_bytes, nullptr, &err);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Could not create outside image buffer (OpenCL error: {})", err);
-        return EXIT_FAILURE;
-    }
-    auto_release img_buffer_release{img_buffer, clReleaseMemObject};
-    // intermediate transpose flaot image
-    intermediate_transpose = clCreateBuffer(ctx, CL_MEM_READ_WRITE, img_size_base * sizeof(float), nullptr, &err);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Could not create outside image intermediate transpose buffer (OpenCL error: {})", err);
-        return EXIT_FAILURE;
-    }
-    auto_release intermediate_transpose_release{intermediate_transpose, clReleaseMemObject};
-    /*
-    // output distance function float image
-    dist_func = clCreateBuffer(ctx, CL_MEM_WRITE_ONLY, img_size_base * sizeof(float), nullptr, &err);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Could not create outside distance function output buffer (OpenCL error: {})", err);
-        return EXIT_FAILURE;
-    }
-    auto_release dist_func_release{dist_func, clReleaseMemObject};
-    */
-
-    // opencl arguments
-    cl_ulong bytes_per_pixel = 2;
-
-    // TODO: decide w param
-    cl_ulong channel_offset = 1;
-    cl_uchar invert = 0;
-
-    std::size_t aux_base_size = image.width;
-
-    // width
-    clSetKernelArg(kernel, 0, sizeof(cl_ulong), &image.width);
-    // height
-    clSetKernelArg(kernel, 1, sizeof(cl_ulong), &image.height);
-    // bytes_per_pixel
-    clSetKernelArg(kernel, 2, sizeof(cl_ulong), &bytes_per_pixel);
-    // channel_offset
-    clSetKernelArg(kernel, 3, sizeof(cl_ulong), &channel_offset);
-    // invert
-    clSetKernelArg(kernel, 4, sizeof(cl_uchar), &invert);
-    // in_image
-    clSetKernelArg(kernel, 5, sizeof(cl_mem), &img_buffer);
-    // out_image
-    clSetKernelArg(kernel, 6, sizeof(cl_mem), &intermediate_transpose);
-    // aux_vertices
-    clSetKernelArg(kernel, 7, aux_base_size * sizeof(cl_ulong), nullptr);
-    // aux_vertex_heights
-    clSetKernelArg(kernel, 8, aux_base_size * sizeof(cl_float), nullptr);
-    // aux_breakpoints
-    clSetKernelArg(kernel, 9, (aux_base_size - 1) * sizeof(cl_float), nullptr);
-
-    // enqueues
-    // buffer write
-    cl_event img_buffer_write;
-    clEnqueueWriteBuffer(queue, img_buffer, CL_FALSE, 0, img_size_bytes, image.data, 0, nullptr, &img_buffer_write);
-    // taskflow
-    cl_event kernel_exec;
-    clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &image.height, nullptr, 1, &img_buffer_write, &kernel_exec);
-    // buffer read back
-    // read back intermediate_transpose for testing
-    std::vector<cl_uchar> test_out_img(img_size_base);
-    clEnqueueReadBuffer(queue, intermediate_transpose, CL_FALSE, 0, img_size_bytes, test_out_img.data(), 1,
-                        &kernel_exec, nullptr);
-
-    // finish
-    clFinish(queue);
-
-    // TODO: write out image for comparison
-
-    // TODO: once taskflow for distance transform works for at least one side, wrap up into struct and function
-    // to make repeating code for other side easier
+    // TODO: set up arguments for brute force gpu algorithm
 
     return EXIT_SUCCESS;
 }
