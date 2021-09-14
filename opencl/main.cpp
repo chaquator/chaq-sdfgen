@@ -20,6 +20,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_FAILURE_USERMSG
 #include <stb/stb_image.h>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb/stb_image_write.h"
 
 // small helper class that gives raii semantics for trivial handles that are already acquired
 template <typename T, typename F>
@@ -85,12 +87,11 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
     spdlog::trace("Image stats:");
     spdlog::trace("W: {}, H: {}, Channels: {}", w, h, n);
 
-    return {{
+    return stbi_img{
         static_cast<cl_uchar*>(stbi_data),
         static_cast<cl_ulong>(w),
         static_cast<cl_ulong>(h),
-        2,
-    }};
+    };
 }
 
 // based on code from https://insanecoding.blogspot.com/2011/11/how-to-read-in-file-in-c.html
@@ -113,7 +114,7 @@ static std::optional<std::string> get_file_contents(const char* filename) {
     // read in data
     in_file.read(contents.data(), contents.size());
 
-    return std::make_optional(std::move(contents));
+    return contents;
 }
 
 static std::optional<std::vector<cl_platform_id>> get_platforms() {
@@ -136,7 +137,7 @@ static std::optional<std::vector<cl_platform_id>> get_platforms() {
         return {};
     }
 
-    return std::make_optional(std::move(platforms));
+    return platforms;
 }
 
 static std::optional<std::string> get_platform_name(cl_platform_id platform) {
@@ -161,7 +162,7 @@ static std::optional<std::string> get_platform_name(cl_platform_id platform) {
         return {};
     }
 
-    return std::make_optional(std::move(plat_name));
+    return plat_name;
 }
 
 static std::optional<std::vector<cl_device_id>> get_devices(cl_platform_id platform) {
@@ -184,7 +185,7 @@ static std::optional<std::vector<cl_device_id>> get_devices(cl_platform_id platf
         return {};
     }
 
-    return std::make_optional(std::move(devices));
+    return devices;
 }
 
 static std::optional<std::string> get_device_name(cl_device_id device) {
@@ -207,7 +208,7 @@ static std::optional<std::string> get_device_name(cl_device_id device) {
         return {};
     }
 
-    return std::make_optional(std::move(device_name));
+    return device_name;
 }
 
 int main(int argc, char* argv[]) {
@@ -229,6 +230,7 @@ int main(int argc, char* argv[]) {
     argparse.add_argument("-s", "--spread")
         .help("Spread radius in pixels for when mapping distance values to image brightness.")
         .nargs(1)
+        .scan<'u', cl_ulong>()
         .default_value(64);
 
     argparse.add_argument("-a", "--asymmetric")
@@ -297,7 +299,7 @@ int main(int argc, char* argv[]) {
                    [](unsigned char c) { return std::tolower(c); });
     spdlog::set_level(spdlog::level::from_str(log_level));
 
-    // if list-platforms or list-devices is specified, process accordingly and then exit
+    // if list-platforms or list-devices is specified, process when appropriate and then exit
     bool list_platforms = argparse["--list-platforms"] == true;
     bool list_devices = argparse["--list-devices"] == true;
 
@@ -338,16 +340,16 @@ int main(int argc, char* argv[]) {
 
     // opencl platform
     spdlog::trace("Getting platforms");
-    auto platform_arg_opt = argparse.present<std::string>("--platform");
+    const auto platform_arg_opt = argparse.present<std::string>("--platform");
     if (platform_arg_opt) {
         // find platform by name
         spdlog::trace("Searching for platform by name.");
-        auto platforms_opt = get_platforms();
+        const auto platforms_opt = get_platforms();
         if (!platforms_opt) {
             spdlog::critical("Could not get OpenCL platforms");
             return EXIT_FAILURE;
         }
-        auto& platforms = *platforms_opt;
+        const auto& platforms = *platforms_opt;
 
         const auto& desired_platform_name = *platform_arg_opt;
         spdlog::trace("Looking for OpenCL platform with name \"{}\"", desired_platform_name);
@@ -429,14 +431,23 @@ int main(int argc, char* argv[]) {
 
     // knowing that neither --list-devices or --list-platforms is called, now is a good time
     // to begin loading the resources asynchronously
-    // asyncrhonously load resoucres while setting up opencl
-    // load image
+
+    // first check for both input and output
     auto input_opt = argparse.present<std::string>("--input");
     if (!input_opt) {
         spdlog::critical("Input file is required");
         return EXIT_FAILURE;
     }
     const auto& infile = *input_opt;
+
+    auto output_opt = argparse.present<std::string>("--output");
+    if (!output_opt) {
+        spdlog::critical("Output file is required");
+        return EXIT_FAILURE;
+    }
+    const auto& outfile = *output_opt;
+
+    // load image
     auto image_fut = std::async(open_image, infile);
 
     // load source content
@@ -602,10 +613,14 @@ int main(int argc, char* argv[]) {
     auto_release image_mem_release{image_mem, clReleaseMemObject};
 
     // opencl kernel arguments
-    // TODO: decide by cli arguments
-    cl_ulong spread = 64;
-    cl_uchar use_luminance = 1;
-    cl_uchar invert = 0;
+    cl_ulong spread = argparse.get<cl_ulong>("--spread");
+    cl_char use_luminence = (cl_uchar)(argparse["--luminence"] == true);
+    cl_uchar invert = (cl_uchar)(argparse["--invert"] == true);
+    cl_uchar asymmetric = (cl_uchar)(argparse["--asymmetric"] == true);
+    spdlog::trace("Spread: {}", spread);
+    spdlog::trace("Use luminence: {}", use_luminence);
+    spdlog::trace("Invert: {}", invert);
+    spdlog::trace("Asymmetric: {}", asymmetric);
 
     // 0 - img
     err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &image_mem);
@@ -619,14 +634,20 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Setting kernel arguments went wrong");
         return EXIT_FAILURE;
     }
-    // 2 - use_luminance
-    err = clSetKernelArg(kernel, 2, sizeof(cl_uchar), &use_luminance);
+    // 2 - use_luminence
+    err = clSetKernelArg(kernel, 2, sizeof(cl_uchar), &use_luminence);
     if (err != CL_SUCCESS) {
         spdlog::critical("Setting kernel arguments went wrong");
         return EXIT_FAILURE;
     }
     // 3 - invert
     err = clSetKernelArg(kernel, 3, sizeof(cl_uchar), &invert);
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Setting kernel arguments went wrong");
+        return EXIT_FAILURE;
+    }
+    // 4 - asymmetric
+    err = clSetKernelArg(kernel, 4, sizeof(cl_uchar), &asymmetric);
     if (err != CL_SUCCESS) {
         spdlog::critical("Setting kernel arguments went wrong");
         return EXIT_FAILURE;
@@ -665,10 +686,19 @@ int main(int argc, char* argv[]) {
     spdlog::trace("Waiting on queue");
     err = clFinish(queue);
     if (err != CL_SUCCESS) {
-        spdlog::critical("something happened");
+        spdlog::critical("Erorr finishing queue (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     spdlog::trace("Queue finished");
+
+    // std::cout.write((const char*)image.data, image.width * image.height * image.bytes_per_pixel);
+    for (cl_ulong y = 0; y < image.height; ++y) {
+        for (cl_ulong x = 0; x < image.width; ++x) {
+            std::cout << *(image.data + image.bytes_per_pixel * (x + image.width * y));
+        }
+    }
+
+    // write back file
 
     return EXIT_SUCCESS;
 }
