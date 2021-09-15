@@ -80,7 +80,7 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
     }
 
     if (stbi_data == nullptr) {
-        spdlog::error("Loading image failed (stbi error: {})", stbi_failure_reason());
+        spdlog::warn("Loading image failed (stbi error: {})", stbi_failure_reason());
         return {};
     }
 
@@ -100,7 +100,7 @@ static std::optional<std::string> get_file_contents(const char* filename) {
     std::ifstream in_file{filename, std::ios_base::in | std::ios_base::binary};
 
     if (!in_file) {
-        spdlog::error("Failed to open file \"{}\"", filename);
+        spdlog::warn("Failed to open file \"{}\"", filename);
         return {};
     }
 
@@ -125,7 +125,7 @@ static std::optional<std::vector<cl_platform_id>> get_platforms() {
     cl_uint num_platforms;
     err = clGetPlatformIDs(0, nullptr, &num_platforms);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error listing OpenCL platforms (OpenCL error: {})", err);
+        spdlog::warn("Error listing OpenCL platforms (OpenCL error: {})", err);
         return {};
     }
 
@@ -133,7 +133,7 @@ static std::optional<std::vector<cl_platform_id>> get_platforms() {
     std::vector<cl_platform_id> platforms(num_platforms);
     err = clGetPlatformIDs(num_platforms, platforms.data(), nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting OpenCL platforms (OpenCL error: {})", err);
+        spdlog::warn("Error getting OpenCL platforms (OpenCL error: {})", err);
         return {};
     }
 
@@ -147,8 +147,7 @@ static std::optional<std::string> get_platform_name(cl_platform_id platform) {
     std::size_t plat_name_size;
     err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &plat_name_size);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting OpenCL platform name for {} (OpenCL error: {})", static_cast<void*>(platform),
-                      err);
+        spdlog::warn("Error getting OpenCL platform name for {} (OpenCL error: {})", static_cast<void*>(platform), err);
         return {};
     }
 
@@ -157,8 +156,7 @@ static std::optional<std::string> get_platform_name(cl_platform_id platform) {
     plat_name.resize(plat_name_size - 1);
     err = clGetPlatformInfo(platform, CL_PLATFORM_NAME, plat_name.capacity(), plat_name.data(), nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting OpenCL platform name for {} (OpenCL error: {})", static_cast<void*>(platform),
-                      err);
+        spdlog::warn("Error getting OpenCL platform name for {} (OpenCL error: {})", static_cast<void*>(platform), err);
         return {};
     }
 
@@ -173,7 +171,7 @@ static std::optional<std::vector<cl_device_id>> get_devices(cl_platform_id platf
     cl_uint num_devices;
     err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, nullptr, &num_devices);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error listing OpenCL devices (OpenCL error: {})", err);
+        spdlog::warn("Error listing OpenCL devices (OpenCL error: {})", err);
         return {};
     }
 
@@ -181,7 +179,7 @@ static std::optional<std::vector<cl_device_id>> get_devices(cl_platform_id platf
     std::vector<cl_device_id> devices(num_devices);
     err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, num_devices, devices.data(), nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting OpenCL devices (OpenCL error: {})", err);
+        spdlog::warn("Error getting OpenCL devices (OpenCL error: {})", err);
         return {};
     }
 
@@ -195,7 +193,7 @@ static std::optional<std::string> get_device_name(cl_device_id device) {
     std::size_t device_name_size;
     err = clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &device_name_size);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting OpenCL device name for {} (OpenCL error: {})", static_cast<void*>(device), err);
+        spdlog::warn("Error getting OpenCL device name for {} (OpenCL error: {})", static_cast<void*>(device), err);
         return {};
     }
 
@@ -204,7 +202,7 @@ static std::optional<std::string> get_device_name(cl_device_id device) {
     device_name.resize(device_name_size - 1);
     err = clGetDeviceInfo(device, CL_DEVICE_NAME, device_name.capacity(), device_name.data(), nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::error("Error getting OpenCL device name for {} (OpenCL error: {})", static_cast<void*>(device), err);
+        spdlog::warn("Error getting OpenCL device name for {} (OpenCL error: {})", static_cast<void*>(device), err);
         return {};
     }
 
@@ -229,9 +227,8 @@ int main(int argc, char* argv[]) {
 
     argparse.add_argument("-s", "--spread")
         .help("Spread radius in pixels for when mapping distance values to image brightness.")
-        .nargs(1)
-        .scan<'u', cl_ulong>()
-        .default_value(64);
+        .default_value<cl_ulong>(64ul)
+        .scan<'i', cl_ulong>();
 
     argparse.add_argument("-a", "--asymmetric")
         .help("SDF will be asymmetrically mapped to output. N: [-S,+S]-->[0,255]; Y: [0,S]-->[0,255]")
@@ -314,7 +311,7 @@ int main(int argc, char* argv[]) {
         for (const auto& p : platforms) {
             const auto name_opt = get_platform_name(p);
             if (!name_opt) {
-                spdlog::error("Failed to get OpenCL platform name of {}, skipping.", static_cast<void*>(p));
+                spdlog::warn("Failed to get OpenCL platform name of {}, skipping.", static_cast<void*>(p));
                 continue;
             }
 
@@ -328,8 +325,8 @@ int main(int argc, char* argv[]) {
     // opencl setup
     cl_int err;
 
-    std::size_t aux_size;
-    std::string aux_str;
+    std::size_t aux_size{};
+    std::string aux_str{};
 
     cl_platform_id platform;
     cl_device_id device;
@@ -359,7 +356,7 @@ int main(int argc, char* argv[]) {
             std::find_if(platforms.cbegin(), platforms.cend(), [&desired_platform_name](const auto& p) {
                 auto p_name_opt = get_platform_name(p);
                 if (!p_name_opt) {
-                    spdlog::error("Failed to get OpenCL platform name for {}, skipping.", static_cast<void*>(p));
+                    spdlog::warn("Failed to get OpenCL platform name for {}, skipping.", static_cast<void*>(p));
                     return false;
                 }
                 const auto& p_name = *p_name_opt;
@@ -391,20 +388,21 @@ int main(int argc, char* argv[]) {
     // opencl platform name
     auto plat_name_opt = get_platform_name(platform);
     if (!plat_name_opt) {
-        spdlog::critical("Could not get plaform name");
-        return EXIT_FAILURE;
+        spdlog::error("Could not get plaform name");
+    } else {
+        spdlog::info("OpenCL platform name: {}", *plat_name_opt);
     }
-    spdlog::info("OpenCL platform name: {}", *plat_name_opt);
 
     // opencl platform version
     clGetPlatformInfo(platform, CL_PLATFORM_VERSION, 0, nullptr, &aux_size);
     aux_str.resize(aux_size - 1);
     err = clGetPlatformInfo(platform, CL_PLATFORM_VERSION, aux_str.capacity() * sizeof(char), aux_str.data(), nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Error getting OpenCL platform version (OpenCL error: {})", err);
+        spdlog::error("Error getting OpenCL platform version (OpenCL error: {})", err);
         return EXIT_FAILURE;
+    } else {
+        spdlog::info("OpenCL platform version: {}", aux_str);
     }
-    spdlog::info("OpenCL platform version: {}", aux_str);
 
     // opencl device
     if (list_devices) {
@@ -418,7 +416,7 @@ int main(int argc, char* argv[]) {
         for (const auto& d : devices) {
             const auto name_opt = get_device_name(d);
             if (!name_opt) {
-                spdlog::error("Failed to get OpenCL device name of {}, skipping.", static_cast<void*>(d));
+                spdlog::warn("Failed to get OpenCL device name of {}, skipping.", static_cast<void*>(d));
                 continue;
             }
 
@@ -436,6 +434,7 @@ int main(int argc, char* argv[]) {
     auto input_opt = argparse.present<std::string>("--input");
     if (!input_opt) {
         spdlog::critical("Input file is required");
+        std::cout << argparse;
         return EXIT_FAILURE;
     }
     const auto& infile = *input_opt;
@@ -443,6 +442,7 @@ int main(int argc, char* argv[]) {
     auto output_opt = argparse.present<std::string>("--output");
     if (!output_opt) {
         spdlog::critical("Output file is required");
+        std::cout << argparse;
         return EXIT_FAILURE;
     }
     const auto& outfile = *output_opt;
@@ -472,7 +472,7 @@ int main(int argc, char* argv[]) {
         const auto name_find = std::find_if(devices.cbegin(), devices.cend(), [&desired_device_name](const auto& d) {
             const auto d_name_opt = get_device_name(d);
             if (!d_name_opt) {
-                spdlog::error("Failed to get OpenCL deivce name for {}, skipping.", static_cast<void*>(d));
+                spdlog::warn("Failed to get OpenCL deivce name for {}, skipping.", static_cast<void*>(d));
                 return false;
             }
             const auto& d_name = *d_name_opt;
@@ -500,14 +500,12 @@ int main(int argc, char* argv[]) {
     spdlog::trace("Got OpenCL device");
 
     // opencl device name
-    clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &aux_size);
-    aux_str.resize(aux_size - 1);
-    err = clGetDeviceInfo(device, CL_DEVICE_NAME, aux_str.capacity() * sizeof(char), aux_str.data(), nullptr);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Error getting OpenCL device name (OpenCL error: {})", err);
-        return EXIT_FAILURE;
+    const auto name_opt = get_device_name(device);
+    if (!name_opt) {
+        spdlog::error("Failed to get OpenCL device name");
+    } else {
+        spdlog::info("OpenCL device name: {}", *name_opt);
     }
-    spdlog::info("OpenCL device name: {}", aux_str);
 
     // opencl context
     ctx = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &err);
@@ -625,31 +623,31 @@ int main(int argc, char* argv[]) {
     // 0 - img
     err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &image_mem);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong");
+        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 1 - spread
     err = clSetKernelArg(kernel, 1, sizeof(cl_ulong), &spread);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong");
+        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 2 - use_luminence
     err = clSetKernelArg(kernel, 2, sizeof(cl_uchar), &use_luminence);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong");
+        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 3 - invert
     err = clSetKernelArg(kernel, 3, sizeof(cl_uchar), &invert);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong");
+        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 4 - asymmetric
     err = clSetKernelArg(kernel, 4, sizeof(cl_uchar), &asymmetric);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong");
+        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
 
@@ -665,20 +663,20 @@ int main(int argc, char* argv[]) {
     err = clEnqueueWriteImage(queue, image_mem, CL_FALSE, img_origin, img_region, image.width * image.bytes_per_pixel,
                               0, image.data, 0, nullptr, &img_write_evt);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting OpenCL kernel argument failed (OpenCL error: {})", err);
+        spdlog::critical("Failed to enqueue image write (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     // kernel execution
     err = clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, work_size, nullptr, 1, &img_write_evt, &kernel_evt);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting OpenCL kernel argument failed (OpenCL error: {})", err);
+        spdlog::critical("Failed to enqueue kernel execution (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
     // image read back
     err = clEnqueueReadImage(queue, image_mem, CL_FALSE, img_origin, img_region, image.width * image.bytes_per_pixel, 0,
                              image.data, 1, &kernel_evt, nullptr);
     if (err != CL_SUCCESS) {
-        spdlog::critical("Setting OpenCL kernel argument failed (OpenCL error: {})", err);
+        spdlog::critical("Failed to enqueue image read back (OpenCL error: {})", err);
         return EXIT_FAILURE;
     }
 
@@ -692,13 +690,16 @@ int main(int argc, char* argv[]) {
     spdlog::trace("Queue finished");
 
     // std::cout.write((const char*)image.data, image.width * image.height * image.bytes_per_pixel);
+    /*
     for (cl_ulong y = 0; y < image.height; ++y) {
         for (cl_ulong x = 0; x < image.width; ++x) {
             std::cout << *(image.data + image.bytes_per_pixel * (x + image.width * y));
         }
-    }
+    }*/
 
     // write back file
+    stbi_write_png("out.png", image.width, image.height, image.bytes_per_pixel, image.data,
+                   (image.width * image.bytes_per_pixel));
 
     return EXIT_SUCCESS;
 }
