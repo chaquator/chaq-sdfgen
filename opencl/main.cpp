@@ -23,6 +23,38 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb/stb_image_write.h"
 
+// different filetypes
+enum class filetype {
+    png,
+    jpeg,
+    tga,
+    bmp,
+};
+
+// determine filetype (if no override is passed as a parameter)
+static filetype derive_filetype(std::string_view name) {
+    using namespace std::literals::string_view_literals;
+
+    // compare with lowercase
+    std::string lower = std::string(name);
+    std::transform(lower.cbegin(), lower.cend(), lower.begin(), [](const char c) { return ::tolower(c); });
+    spdlog::trace("\"{}\" -> \"{}\"", name, lower);
+
+    using filetype_pair = std::pair<std::string_view, filetype>;
+    std::initializer_list<filetype_pair> type_map = {
+        {"png"sv, filetype::png}, {"jpeg"sv, filetype::jpeg}, {"jpg"sv, filetype::jpeg},
+        {"tga"sv, filetype::tga}, {"bmp"sv, filetype::bmp},
+    };
+    auto find = std::find_if(type_map.begin(), type_map.end(), [&name = lower](const auto& p) {
+        const auto find = name.find(p.first);
+        return find != std::string_view::npos;
+    });
+
+    if (find == type_map.end()) return filetype::png;
+
+    return find->second;
+}
+
 // small helper class that gives raii semantics for trivial handles that are already acquired
 template <typename T, typename F>
 class auto_release {
@@ -92,6 +124,64 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
         static_cast<cl_ulong>(w),
         static_cast<cl_ulong>(h),
     };
+}
+
+static void write_to_stdout(void* context, void* data, int size) {
+    (void)(context);
+    fwrite(data, (size_t)size, 1, stdout);
+}
+
+static bool write_image(std::string_view filename, filetype file_type, const stbi_img& img, int quality) {
+    using namespace std::literals::string_view_literals;
+
+    spdlog::trace("Filename: {}", filename);
+    std::unordered_map<filetype, std::string_view> debug_map = {
+        {filetype::bmp, "bmp"sv},
+        {filetype::jpeg, "jpeg"sv},
+        {filetype::png, "png"sv},
+        {filetype::tga, "tga"sv},
+    };
+    spdlog::trace("File type: {}", debug_map[file_type]);
+    spdlog::trace("Quality: {}", quality);
+
+    // check if is file or stdout
+    bool use_stdout = filename == "-";
+    switch (file_type) {
+    case filetype::bmp: {
+        if (use_stdout) {
+            return 0 == stbi_write_bmp_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+                                               img.data);
+        } else {
+            return 0 == stbi_write_bmp(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data);
+        }
+    } break;
+    case filetype::jpeg: {
+        if (use_stdout) {
+            return 0 == stbi_write_jpg_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+                                               img.data, quality);
+        } else {
+            return 0 == stbi_write_jpg(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data, quality);
+        }
+    } break;
+    case filetype::png: {
+        if (use_stdout) {
+            return 0 == stbi_write_png_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+                                               img.data, img.bytes_per_pixel * img.width);
+        } else {
+            return 0 == stbi_write_png(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data,
+                                       img.bytes_per_pixel * img.width);
+        }
+    } break;
+    case filetype::tga: {
+        if (use_stdout) {
+            return 0 == stbi_write_tga_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+                                               img.data);
+        } else {
+            return 0 == stbi_write_tga(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data);
+        }
+    } break;
+    }
+    return true;
 }
 
 // based on code from https://insanecoding.blogspot.com/2011/11/how-to-read-in-file-in-c.html
@@ -216,14 +306,15 @@ int main(int argc, char* argv[]) {
     argparse::ArgumentParser argparse(argv[0], "2.0");
 
     argparse.add_argument("-f", "--filetype")
-        .help("Filetype of output. Supoprted types are PNG, JPEG, TGA, BMP")
-        .nargs(1)
-        .default_value("png");
+        .help("Types are PNG, JPEG, TGA, BMP. Derived by filename if no override given, falls back to PNG if"
+              "derivation fails.")
+        .nargs(1);
 
     argparse.add_argument("-q", "--quality")
         .help("Quality of output file in a range from 0 to 100. Only used for JPEG output.")
         .nargs(1)
-        .default_value(100);
+        .default_value<int>(100)
+        .scan<'i', int>();
 
     argparse.add_argument("-s", "--spread")
         .help("Spread radius in pixels for when mapping distance values to image brightness.")
@@ -256,8 +347,8 @@ int main(int argc, char* argv[]) {
 
     argparse.add_argument("--platform")
         .nargs(1)
-        .help(
-            "Choose platform by name. Use --list-platforms to view platform names. Chooses first platform otherwise.");
+        .help("Choose platform by name. Use --list-platforms to view platform names. Chooses first platform "
+              "otherwise.");
 
     argparse.add_argument("--list-devices")
         .help("Lists all devices on a platform (if none specified, uses the default).")
@@ -689,17 +780,25 @@ int main(int argc, char* argv[]) {
     }
     spdlog::trace("Queue finished");
 
-    // std::cout.write((const char*)image.data, image.width * image.height * image.bytes_per_pixel);
-    /*
-    for (cl_ulong y = 0; y < image.height; ++y) {
-        for (cl_ulong x = 0; x < image.width; ++x) {
-            std::cout << *(image.data + image.bytes_per_pixel * (x + image.width * y));
-        }
-    }*/
-
     // write back file
-    stbi_write_png("out.png", image.width, image.height, image.bytes_per_pixel, image.data,
-                   (image.width * image.bytes_per_pixel));
+    spdlog::trace("Writing back file.");
+
+    const auto filetype_override = argparse.present<std::string>("--filetype");
+    spdlog::trace("Filetype present: {}", (bool)filetype_override);
+
+    const auto& derive_input = (bool)filetype_override ? *filetype_override : outfile;
+    const filetype file_type = derive_filetype(derive_input);
+
+    const auto quality = argparse.get<int>("--quality");
+
+    const bool write_success = write_image(outfile, file_type, image, quality);
+
+    spdlog::trace("Write status: {}", write_success);
+
+    if (!write_success) {
+        spdlog::critical("Failed to write out file");
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }
