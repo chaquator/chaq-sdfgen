@@ -301,6 +301,23 @@ static std::optional<std::string> get_device_name(cl_device_id device) {
     return device_name;
 }
 
+template <std::size_t index = 0, class T, class... Ts>
+bool set_kernel_args(cl_kernel kernel, T arg, Ts... args) {
+    cl_int err = clSetKernelArg(kernel, index, sizeof(T), &arg);
+    if (err != CL_SUCCESS) {
+        spdlog::warn("Setting kernel argument {} failed (OpenCL error: {})", index, err);
+        return false;
+    }
+    spdlog::trace("Set kernel argument {}", index);
+    return set_kernel_args<index + 1>(kernel, args...);
+}
+
+template <std::size_t>
+bool set_kernel_args(cl_kernel kernel) {
+    (void)kernel;
+    return true;
+}
+
 int main(int argc, char* argv[]) {
     spdlog::set_level(spdlog::level::critical);
 
@@ -702,7 +719,7 @@ int main(int argc, char* argv[]) {
         cl_mem img_mem = clCreateImage(ctx, mem_flags, &img_fmt, &img_dsc, nullptr, &err);
         if (err != CL_SUCCESS) {
             spdlog::warn("Failed to create OpenCL image (OpenCL error: {})", err);
-            return std::nullopt;
+            return {};
         }
         return auto_release{img_mem, clReleaseMemObject};
     };
@@ -732,39 +749,10 @@ int main(int argc, char* argv[]) {
     spdlog::trace("Invert: {}", invert);
     spdlog::trace("Asymmetric: {}", asymmetric);
 
-    // 0 - img
-    err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &img_in_opt->handle());
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
-        return EXIT_FAILURE;
-    }
-    err = clSetKernelArg(kernel, 1, sizeof(cl_mem), &img_out_opt->handle());
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
-        return EXIT_FAILURE;
-    }
-    // 1 - spread
-    err = clSetKernelArg(kernel, 2, sizeof(cl_ulong), &spread);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
-        return EXIT_FAILURE;
-    }
-    // 2 - use_luminence
-    err = clSetKernelArg(kernel, 3, sizeof(cl_uchar), &use_luminence);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
-        return EXIT_FAILURE;
-    }
-    // 3 - invert
-    err = clSetKernelArg(kernel, 4, sizeof(cl_uchar), &invert);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
-        return EXIT_FAILURE;
-    }
-    // 4 - asymmetric
-    err = clSetKernelArg(kernel, 5, sizeof(cl_uchar), &asymmetric);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
+    bool arg_status =
+        set_kernel_args(kernel, img_in_opt->handle(), img_out_opt->handle(), spread, use_luminence, invert, asymmetric);
+    if (!arg_status) {
+        spdlog::critical("Failed to enqueue OpenCL arguments");
         return EXIT_FAILURE;
     }
 
