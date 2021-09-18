@@ -31,30 +31,6 @@ enum class filetype {
     bmp,
 };
 
-// determine filetype (if no override is passed as a parameter)
-static filetype derive_filetype(std::string_view name) {
-    using namespace std::literals::string_view_literals;
-
-    // compare with lowercase
-    std::string lower = std::string(name);
-    std::transform(lower.cbegin(), lower.cend(), lower.begin(), [](const char c) { return ::tolower(c); });
-    spdlog::trace("\"{}\" -> \"{}\"", name, lower);
-
-    using filetype_pair = std::pair<std::string_view, filetype>;
-    std::initializer_list<filetype_pair> type_map = {
-        {"png"sv, filetype::png}, {"jpeg"sv, filetype::jpeg}, {"jpg"sv, filetype::jpeg},
-        {"tga"sv, filetype::tga}, {"bmp"sv, filetype::bmp},
-    };
-    auto find = std::find_if(type_map.begin(), type_map.end(), [&name = lower](const auto& p) {
-        const auto find = name.find(p.first);
-        return find != std::string_view::npos;
-    });
-
-    if (find == type_map.end()) return filetype::png;
-
-    return find->second;
-}
-
 // small helper class that gives raii semantics for trivial handles that are already acquired
 template <typename T, typename F>
 class auto_release {
@@ -64,8 +40,8 @@ class auto_release {
     bool m_valid{false};
 
   public:
-    const T handle() const { return m_handle; }
-    const F release_function() const { return m_release_func; }
+    const T& handle() const { return m_handle; }
+    const F& release_function() const { return m_release_func; }
     bool valid() const { return m_valid; }
 
     void invalidate() { m_valid = false; }
@@ -94,7 +70,7 @@ struct stbi_img {
     cl_uchar* data = nullptr;
     cl_ulong width = 0;
     cl_ulong height = 0;
-    cl_ulong bytes_per_pixel = 2;
+    cl_ulong bytes_per_pixel = 0;
 };
 
 static std::optional<stbi_img> open_image(std::string_view filename) {
@@ -123,7 +99,32 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
         static_cast<cl_uchar*>(stbi_data),
         static_cast<cl_ulong>(w),
         static_cast<cl_ulong>(h),
+        2,
     };
+}
+
+// determine filetype (if no override is passed as a parameter)
+static filetype derive_filetype(std::string_view name) {
+    using namespace std::literals::string_view_literals;
+
+    // compare with lowercase
+    std::string lower = std::string(name);
+    std::transform(lower.cbegin(), lower.cend(), lower.begin(), [](const char c) { return std::tolower(c); });
+    spdlog::trace("\"{}\" -> \"{}\"", name, lower);
+
+    using filetype_pair = std::pair<std::string_view, filetype>;
+    std::initializer_list<filetype_pair> type_map = {
+        {"png"sv, filetype::png}, {"jpeg"sv, filetype::jpeg}, {"jpg"sv, filetype::jpeg},
+        {"tga"sv, filetype::tga}, {"bmp"sv, filetype::bmp},
+    };
+    auto find = std::find_if(type_map.begin(), type_map.end(), [&name = lower](const auto& p) {
+        const auto find = name.find(p.first);
+        return find != std::string_view::npos;
+    });
+
+    if (find == type_map.end()) return filetype::png;
+
+    return find->second;
 }
 
 static void write_to_stdout(void* context, void* data, int size) {
@@ -134,7 +135,10 @@ static void write_to_stdout(void* context, void* data, int size) {
 static bool write_image(std::string_view filename, filetype file_type, const stbi_img& img, int quality) {
     using namespace std::literals::string_view_literals;
 
+    bool use_stdout = filename == "-";
+
     spdlog::trace("Filename: {}", filename);
+    spdlog::trace("Writing to stdout: {}", use_stdout);
     std::unordered_map<filetype, std::string_view> debug_map = {
         {filetype::bmp, "bmp"sv},
         {filetype::jpeg, "jpeg"sv},
@@ -144,40 +148,38 @@ static bool write_image(std::string_view filename, filetype file_type, const stb
     spdlog::trace("File type: {}", debug_map[file_type]);
     spdlog::trace("Quality: {}", quality);
 
-    // check if is file or stdout
-    bool use_stdout = filename == "-";
     switch (file_type) {
     case filetype::bmp: {
         if (use_stdout) {
-            return 0 == stbi_write_bmp_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+            return 0 != stbi_write_bmp_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
                                                img.data);
         } else {
-            return 0 == stbi_write_bmp(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data);
+            return 0 != stbi_write_bmp(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data);
         }
     } break;
     case filetype::jpeg: {
         if (use_stdout) {
-            return 0 == stbi_write_jpg_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+            return 0 != stbi_write_jpg_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
                                                img.data, quality);
         } else {
-            return 0 == stbi_write_jpg(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data, quality);
+            return 0 != stbi_write_jpg(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data, quality);
         }
     } break;
     case filetype::png: {
         if (use_stdout) {
-            return 0 == stbi_write_png_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+            return 0 != stbi_write_png_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
                                                img.data, img.bytes_per_pixel * img.width);
         } else {
-            return 0 == stbi_write_png(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data,
+            return 0 != stbi_write_png(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data,
                                        img.bytes_per_pixel * img.width);
         }
     } break;
     case filetype::tga: {
         if (use_stdout) {
-            return 0 == stbi_write_tga_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
+            return 0 != stbi_write_tga_to_func(write_to_stdout, nullptr, img.width, img.height, img.bytes_per_pixel,
                                                img.data);
         } else {
-            return 0 == stbi_write_tga(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data);
+            return 0 != stbi_write_tga(filename.data(), img.width, img.height, img.bytes_per_pixel, img.data);
         }
     } break;
     }
@@ -610,7 +612,7 @@ int main(int argc, char* argv[]) {
     // opencl command queue
     cl_command_queue_properties properties[] = {
         CL_QUEUE_PROPERTIES,
-        CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE,
+        CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE,
         //
         0,
     };
@@ -678,28 +680,47 @@ int main(int argc, char* argv[]) {
         spdlog::critical("Image open failed.");
         return EXIT_FAILURE;
     }
-    auto image = *image_opt;
-    auto_release image_release{image.data, stbi_image_free};
+    auto image_open = *image_opt;
+    auto_release image_release{image_open.data, stbi_image_free};
     spdlog::trace("Got image data");
 
-    // opencl image
-    cl_image_format img_fmt;
-    img_fmt.image_channel_order = CL_RA;
-    img_fmt.image_channel_data_type = CL_UNSIGNED_INT8;
-    cl_image_desc img_dsc;
-    img_dsc.image_type = CL_MEM_OBJECT_IMAGE2D;
-    img_dsc.image_width = image.width;
-    img_dsc.image_height = image.height;
-    img_dsc.image_row_pitch = image.width * image.bytes_per_pixel;
-    img_dsc.num_mip_levels = 0;
-    img_dsc.num_samples = 0;
-    img_dsc.buffer = nullptr;
-    cl_mem image_mem = clCreateImage(ctx, CL_MEM_READ_WRITE, &img_fmt, &img_dsc, nullptr, &err);
-    if (err != CL_SUCCESS) {
-        spdlog::critical("Failed to create OpenCL image (OpenCL error: {})", err);
+    auto make_image =
+        [&ctx](std::size_t w, std::size_t h, std::size_t channels, cl_channel_order channel_order,
+               cl_mem_flags mem_flags) -> std::optional<auto_release<cl_mem, decltype(&clReleaseMemObject)>> {
+        cl_image_format img_fmt;
+        img_fmt.image_channel_order = channel_order;
+        img_fmt.image_channel_data_type = CL_UNSIGNED_INT8;
+        cl_image_desc img_dsc;
+        img_dsc.image_type = CL_MEM_OBJECT_IMAGE2D;
+        img_dsc.image_width = w;
+        img_dsc.image_height = h;
+        img_dsc.image_row_pitch = w * channels;
+        img_dsc.num_mip_levels = 0;
+        img_dsc.num_samples = 0;
+        img_dsc.buffer = nullptr;
+        cl_int err;
+        cl_mem img_mem = clCreateImage(ctx, mem_flags, &img_fmt, &img_dsc, nullptr, &err);
+        if (err != CL_SUCCESS) {
+            spdlog::warn("Failed to create OpenCL image (OpenCL error: {})", err);
+            return std::nullopt;
+        }
+        return auto_release{img_mem, clReleaseMemObject};
+    };
+
+    // opencl input image
+    auto img_in_opt =
+        make_image(image_open.width, image_open.height, image_open.bytes_per_pixel, CL_RA, CL_MEM_READ_ONLY);
+    if (!img_in_opt) {
+        spdlog::critical("Failed to create OpenCL input image");
         return EXIT_FAILURE;
     }
-    auto_release image_mem_release{image_mem, clReleaseMemObject};
+
+    // opencl output image
+    auto img_out_opt = make_image(image_open.width, image_open.height, 1, CL_RA, CL_MEM_WRITE_ONLY);
+    if (!img_out_opt) {
+        spdlog::critical("Failed to create OpenCL output image");
+        return EXIT_FAILURE;
+    }
 
     // opencl kernel arguments
     cl_ulong spread = argparse.get<cl_ulong>("--spread");
@@ -712,31 +733,36 @@ int main(int argc, char* argv[]) {
     spdlog::trace("Asymmetric: {}", asymmetric);
 
     // 0 - img
-    err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &image_mem);
+    err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &img_in_opt->handle());
+    if (err != CL_SUCCESS) {
+        spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
+        return EXIT_FAILURE;
+    }
+    err = clSetKernelArg(kernel, 1, sizeof(cl_mem), &img_out_opt->handle());
     if (err != CL_SUCCESS) {
         spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 1 - spread
-    err = clSetKernelArg(kernel, 1, sizeof(cl_ulong), &spread);
+    err = clSetKernelArg(kernel, 2, sizeof(cl_ulong), &spread);
     if (err != CL_SUCCESS) {
         spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 2 - use_luminence
-    err = clSetKernelArg(kernel, 2, sizeof(cl_uchar), &use_luminence);
+    err = clSetKernelArg(kernel, 3, sizeof(cl_uchar), &use_luminence);
     if (err != CL_SUCCESS) {
         spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 3 - invert
-    err = clSetKernelArg(kernel, 3, sizeof(cl_uchar), &invert);
+    err = clSetKernelArg(kernel, 4, sizeof(cl_uchar), &invert);
     if (err != CL_SUCCESS) {
         spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
     }
     // 4 - asymmetric
-    err = clSetKernelArg(kernel, 4, sizeof(cl_uchar), &asymmetric);
+    err = clSetKernelArg(kernel, 5, sizeof(cl_uchar), &asymmetric);
     if (err != CL_SUCCESS) {
         spdlog::critical("Setting kernel arguments went wrong {}", __LINE__);
         return EXIT_FAILURE;
@@ -744,15 +770,16 @@ int main(int argc, char* argv[]) {
 
     // opencl enqueues
     size_t img_origin[3] = {0, 0, 0};
-    size_t img_region[3] = {image.width, image.height, 1};
-    size_t work_size[2] = {image.width, image.height};
+    size_t img_region[3] = {image_open.width, image_open.height, 1};
+    size_t work_size[2] = {image_open.width, image_open.height};
 
     cl_event img_write_evt;
     cl_event kernel_evt;
 
     // image write
-    err = clEnqueueWriteImage(queue, image_mem, CL_FALSE, img_origin, img_region, image.width * image.bytes_per_pixel,
-                              0, image.data, 0, nullptr, &img_write_evt);
+    err = clEnqueueWriteImage(queue, img_in_opt->handle(), CL_FALSE, img_origin, img_region,
+                              image_open.width * image_open.bytes_per_pixel, 0, image_open.data, 0, nullptr,
+                              &img_write_evt);
     if (err != CL_SUCCESS) {
         spdlog::critical("Failed to enqueue image write (OpenCL error: {})", err);
         return EXIT_FAILURE;
@@ -764,8 +791,9 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     // image read back
-    err = clEnqueueReadImage(queue, image_mem, CL_FALSE, img_origin, img_region, image.width * image.bytes_per_pixel, 0,
-                             image.data, 1, &kernel_evt, nullptr);
+    err =
+        clEnqueueReadImage(queue, img_out_opt->handle(), CL_FALSE, img_origin, img_region,
+                           image_open.width * image_open.bytes_per_pixel, 0, image_open.data, 1, &kernel_evt, nullptr);
     if (err != CL_SUCCESS) {
         spdlog::critical("Failed to enqueue image read back (OpenCL error: {})", err);
         return EXIT_FAILURE;
@@ -791,7 +819,7 @@ int main(int argc, char* argv[]) {
 
     const auto quality = argparse.get<int>("--quality");
 
-    const bool write_success = write_image(outfile, file_type, image, quality);
+    const bool write_success = write_image(outfile, file_type, image_open, quality);
 
     spdlog::trace("Write status: {}", write_success);
 

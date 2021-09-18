@@ -17,13 +17,13 @@ static float linear_remap(float val, float src_min, float src_max, float dst_min
     return (((val - src_min) * nd) / sn) + dst_min;
 }
 
-static bool read(int x, int y, read_write image2d_t img, uchar use_luminence) {
+static bool read(int x, int y, read_only image2d_t img, uchar use_luminence) {
     uint4 pixel = read_imageui(img, (int2)(x, y));
     uchar p_val = use_luminence ? pixel.x : pixel.w;
     return map_read(p_val);
 }
 
-kernel void sdf(read_write image2d_t img, ulong spread, //
+kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong spread, //
                 uchar use_luminence, uchar invert, uchar asymmetric) {
     size_t w = get_global_size(0);
     size_t h = get_global_size(1);
@@ -40,7 +40,7 @@ kernel void sdf(read_write image2d_t img, ulong spread, //
     bool found_candidate = false;
     ulong cur_closest_d_2 = 0;
 
-    bool this_px = read(x, y, img, use_luminence);
+    bool this_px = read(x, y, img_in, use_luminence);
 
     // clamp bounds of for loop
     ulong sp1 = spread + 1;
@@ -64,7 +64,7 @@ kernel void sdf(read_write image2d_t img, ulong spread, //
             d_2 = (dx * dx) + (dy * dy);
             if (d_2 > (sp1 * sp1)) continue;
 
-            search_px = read(cx, cy, img, use_luminence);
+            search_px = read(cx, cy, img_in, use_luminence);
 
             // find closest pixel not same as this_px
             if (search_px != this_px) {
@@ -90,16 +90,11 @@ kernel void sdf(read_write image2d_t img, ulong spread, //
         this_dist = decider ? INFINITY : -INFINITY;
     }
 
-    // TODO: current issue looks like some sort of data race, somethings being written back incorrectly
-
     // map distacne to output value
     float src_min = asymmetric ? 0 : -((float)spread);
     uint val = (uint)linear_remap(this_dist, src_min, (float)spread, 0.f, 255.f);
 
     // write back
-    // val = found_candidate ? (closest_pixel.x << 4 | closest_pixel.y) : (uint)fabs(this_dist);
-    // val = found_candidate ? 17 : 0;
-    // val = x << 4 | y;
     uint4 col = (uint4)(val, 255, 255, 255);
-    write_imageui(img, (int2)(x, y), col);
+    write_imageui(img_out, (int2)(x, y), col);
 }
