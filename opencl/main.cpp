@@ -24,12 +24,50 @@
 #include "stb/stb_image_write.h"
 
 // different filetypes
-enum class filetype {
+namespace filetype {
+enum filetype {
     png,
     jpeg,
     tga,
     bmp,
 };
+
+// Derives filetype from string by searching for it.
+static filetype from_str(std::string_view name, filetype fallback = png) {
+    using namespace std::literals::string_view_literals;
+
+    // compare with lowercase
+    std::string lower{name};
+    std::transform(lower.cbegin(), lower.cend(), lower.begin(), [](const char c) { return std::tolower(c); });
+    spdlog::trace("\"{}\" -> \"{}\"", name, lower);
+
+    using filetype_pair = std::pair<std::string_view, filetype>;
+    std::initializer_list<filetype_pair> type_map = {
+        {"png"sv, filetype::png}, {"jpeg"sv, filetype::jpeg}, {"jpg"sv, filetype::jpeg},
+        {"tga"sv, filetype::tga}, {"bmp"sv, filetype::bmp},
+    };
+    auto find = std::find_if(type_map.begin(), type_map.end(), [&name = lower](const auto& p) {
+        const auto find = name.find(p.first);
+        return find != std::string_view::npos;
+    });
+
+    if (find == type_map.end()) return fallback;
+
+    return find->second;
+}
+
+static std::string_view to_str(filetype type) {
+    using namespace std::literals::string_view_literals;
+    std::unordered_map<filetype, std::string_view> filetype_map = {
+        {filetype::bmp, "bmp"sv},
+        {filetype::jpeg, "jpg"sv},
+        {filetype::png, "png"sv},
+        {filetype::tga, "tga"sv},
+    };
+    return filetype_map[type];
+}
+
+} // namespace filetype
 
 // small helper class that gives raii semantics for trivial handles that are already acquired
 template <typename T, typename F>
@@ -103,49 +141,19 @@ static std::optional<stbi_img> open_image(std::string_view filename) {
     };
 }
 
-// determine filetype (if no override is passed as a parameter)
-static filetype derive_filetype(std::string_view name) {
-    using namespace std::literals::string_view_literals;
-
-    // compare with lowercase
-    std::string lower = std::string(name);
-    std::transform(lower.cbegin(), lower.cend(), lower.begin(), [](const char c) { return std::tolower(c); });
-    spdlog::trace("\"{}\" -> \"{}\"", name, lower);
-
-    using filetype_pair = std::pair<std::string_view, filetype>;
-    std::initializer_list<filetype_pair> type_map = {
-        {"png"sv, filetype::png}, {"jpeg"sv, filetype::jpeg}, {"jpg"sv, filetype::jpeg},
-        {"tga"sv, filetype::tga}, {"bmp"sv, filetype::bmp},
-    };
-    auto find = std::find_if(type_map.begin(), type_map.end(), [&name = lower](const auto& p) {
-        const auto find = name.find(p.first);
-        return find != std::string_view::npos;
-    });
-
-    if (find == type_map.end()) return filetype::png;
-
-    return find->second;
-}
-
 static void write_to_stdout(void* context, void* data, int size) {
     (void)(context);
     fwrite(data, (size_t)size, 1, stdout);
 }
 
-static bool write_image(std::string_view filename, filetype file_type, const stbi_img& img, int quality) {
+static bool write_image(std::string_view filename, filetype::filetype file_type, const stbi_img& img, int quality) {
     using namespace std::literals::string_view_literals;
 
     bool use_stdout = filename == "-";
 
     spdlog::trace("Filename: {}", filename);
     spdlog::trace("Writing to stdout: {}", use_stdout);
-    std::unordered_map<filetype, std::string_view> debug_map = {
-        {filetype::bmp, "bmp"sv},
-        {filetype::jpeg, "jpeg"sv},
-        {filetype::png, "png"sv},
-        {filetype::tga, "tga"sv},
-    };
-    spdlog::trace("File type: {}", debug_map[file_type]);
+    spdlog::trace("File type: {}", filetype::to_str(file_type));
     spdlog::trace("Quality: {}", quality);
 
     switch (file_type) {
@@ -301,21 +309,46 @@ static std::optional<std::string> get_device_name(cl_device_id device) {
     return device_name;
 }
 
-template <std::size_t index = 0, class T, class... Ts>
-bool set_kernel_args(cl_kernel kernel, T arg, Ts... args) {
+template <class T>
+static bool set_kernel_arg(cl_kernel kernel, std::size_t index, T arg) {
     cl_int err = clSetKernelArg(kernel, index, sizeof(T), &arg);
     if (err != CL_SUCCESS) {
         spdlog::warn("Setting kernel argument {} failed (OpenCL error: {})", index, err);
         return false;
     }
     spdlog::trace("Set kernel argument {}", index);
-    return set_kernel_args<index + 1>(kernel, args...);
+    return true;
 }
 
-template <std::size_t>
-bool set_kernel_args(cl_kernel kernel) {
-    (void)kernel;
-    return true;
+template <class... Ts>
+static bool set_kernel_args(cl_kernel kernel, Ts... args) {
+    std::size_t index = 0;
+    return (set_kernel_arg(kernel, index++, args) && ...);
+}
+
+void CL_CALLBACK kernel_callback(cl_event event, cl_int event_command_status, void* user_data) {
+    (void)event_command_status;
+    (void)user_data;
+
+    cl_int err;
+    cl_ulong t_start_ns, t_end_ns;
+    err = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &t_start_ns, nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::warn("Failed to get OpenCL event start time (OpenCL error: {})", err);
+        return;
+    }
+    err = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &t_end_ns, nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::warn("Failed to get OpenCL event end time (OpenCL error: {})", err);
+        return;
+    }
+
+    cl_ulong delta_t_ns = t_end_ns - t_start_ns;
+    cl_ulong ns_per_sec = 1000000000;
+    cl_ulong sec = delta_t_ns / ns_per_sec;
+    cl_ulong rem = delta_t_ns % ns_per_sec;
+    float frac = (float)rem / (float)ns_per_sec;
+    spdlog::info("Kernel timing: {:.3f} sec", sec + frac);
 }
 
 int main(int argc, char* argv[]) {
@@ -537,10 +570,7 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
-    // knowing that neither --list-devices or --list-platforms is called, now is a good time
-    // to begin loading the resources asynchronously
-
-    // first check for both input and output
+    // ensure both input and output are given
     auto input_opt = argparse.present<std::string>("--input");
     if (!input_opt) {
         spdlog::critical("Input file is required");
@@ -556,6 +586,9 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     const auto& outfile = *output_opt;
+
+    // knowing that the required parameters are supplied, and that neither --list-devices or --list-platforms
+    // is listed, now we can load the resources asyncrhonously
 
     // load image
     auto image_fut = std::async(open_image, infile);
@@ -752,7 +785,7 @@ int main(int argc, char* argv[]) {
     bool arg_status =
         set_kernel_args(kernel, img_in_opt->handle(), img_out_opt->handle(), spread, use_luminence, invert, asymmetric);
     if (!arg_status) {
-        spdlog::critical("Failed to enqueue OpenCL arguments");
+        spdlog::critical("Failed to set OpenCL arguments");
         return EXIT_FAILURE;
     }
 
@@ -773,6 +806,7 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     // kernel execution
+    // TODO: split into granular kernel executions, add callbacks to log completion percentage and time taken stats
     err = clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, work_size, nullptr, 1, &img_write_evt, &kernel_evt);
     if (err != CL_SUCCESS) {
         spdlog::critical("Failed to enqueue kernel execution (OpenCL error: {})", err);
@@ -785,6 +819,11 @@ int main(int argc, char* argv[]) {
     if (err != CL_SUCCESS) {
         spdlog::critical("Failed to enqueue image read back (OpenCL error: {})", err);
         return EXIT_FAILURE;
+    }
+
+    err = clSetEventCallback(kernel_evt, CL_COMPLETE, kernel_callback, nullptr);
+    if (err != CL_SUCCESS) {
+        spdlog::error("Failed to set OpenCL kernel callback (OpenCL error: {})", err);
     }
 
     // opencl wait
@@ -803,7 +842,7 @@ int main(int argc, char* argv[]) {
     spdlog::trace("Filetype present: {}", (bool)filetype_override);
 
     const auto& derive_input = (bool)filetype_override ? *filetype_override : outfile;
-    const filetype file_type = derive_filetype(derive_input);
+    const auto file_type = filetype::from_str(derive_input, filetype::png);
 
     const auto quality = argparse.get<int>("--quality");
 

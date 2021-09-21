@@ -23,24 +23,26 @@ static bool read(int x, int y, read_only image2d_t img, uchar use_luminence) {
     return map_read(p_val);
 }
 
-kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong spread, //
-                uchar use_luminence, uchar invert, uchar asymmetric) {
-    size_t w = get_global_size(0);
-    size_t h = get_global_size(1);
+// search strategies
+// in general, every search strategy must return a pixel--which is different in value from this_val--for which there is
+// no other pixel with a smaller distance to this_px (x,y).
+// if none found, return this_px
 
-    // TODO: come up with different access strategies for the radius and compare performance on large images
-    // in general, every access strategy needs to return the pixel whose distance to (x,y) is not larger than that of
-    // any other pixel and its value is different than that of (x,y)
+// basic square search with one early exit optimization
+struct opt_ul2 {
+    ulong2 point;
+    bool valid;
+};
+static struct opt_ul2 search_square(bool this_val, ulong2 this_px, ulong2 dim, ulong spread, read_only image2d_t img,
+                                    uchar use_luminence) {
+    ulong x = this_px.x;
+    ulong y = this_px.y;
+    ulong w = dim.x;
+    ulong h = dim.y;
 
-    // search in spread radius for closest pixel
-    ulong x = (ulong)get_global_id(0);
-    ulong y = (ulong)get_global_id(1);
-
-    ulong2 closest_pixel = (ulong2)(0, 0);
+    ulong2 closest_pixel = this_px;
+    ulong closest_d_2 = 0;
     bool found_candidate = false;
-    ulong cur_closest_d_2 = 0;
-
-    bool this_px = read(x, y, img_in, use_luminence);
 
     // clamp bounds of for loop
     ulong sp1 = spread + 1;
@@ -49,42 +51,64 @@ kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong 
     ulong lb_x = sp1 > x ? 0 : x - sp1;
     ulong ub_x = sp1 > (w - x) ? w : x + sp1;
 
-    long dx;
-    long dy;
-    long d_2;
-    uint4 px;
-    uchar p_val;
-    bool search_px;
-
     ulong cy, cx;
     for (cy = lb_y; cy < ub_y; ++cy) {
         for (cx = lb_x; cx < ub_x; ++cx) {
-            dx = cx - x;
-            dy = cy - y;
-            d_2 = (dx * dx) + (dy * dy);
+            long dx = x - cx;
+            long dy = y - cy;
+            ulong d_2 = (ulong)(dx * dx) + (ulong)(dy * dy);
             if (d_2 > (sp1 * sp1)) continue;
 
-            search_px = read(cx, cy, img_in, use_luminence);
+            bool search_val = read(cx, cy, img, use_luminence);
 
-            // find closest pixel not same as this_px
-            if (search_px != this_px) {
-                if (!found_candidate) {
+            // find closest pixel not same as this_val
+            if (search_val != this_val) {
+                // if (d_2 < closest_d_2 || all(closest_pixel == this_px))
+                if (d_2 < closest_d_2 || !found_candidate) {
                     closest_pixel = (ulong2)(cx, cy);
-                    cur_closest_d_2 = d_2;
+                    closest_d_2 = d_2;
                     found_candidate = true;
-                } else if (d_2 < cur_closest_d_2) {
-                    closest_pixel = (ulong2)(cx, cy);
-                    cur_closest_d_2 = d_2;
+
+                    /*
+                    // TODO: fix this early exit, also add the optimization for lower bound limiting too
+                    // early exit: if there is a candidate pixel in either negative (upper or leftward) half, then we
+                    // can early exit at the same offset in the positive half
+                    if (all((ulong2)(cx, cy) < this_px)) {
+                        ub_x = x + dx;
+                        ub_y = y + dy;
+                    }
+                    */
                 }
             }
         }
     }
 
+    struct opt_ul2 ret = {closest_pixel, found_candidate};
+    return ret;
+}
+
+kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong spread, //
+                uchar use_luminence, uchar invert, uchar asymmetric) {
+    size_t w = get_global_size(0);
+    size_t h = get_global_size(1);
+
+    // search in spread radius for closest pixel
+    ulong x = (ulong)get_global_id(0);
+    ulong y = (ulong)get_global_id(1);
+    bool this_val = read(x, y, img_in, use_luminence);
+
+    struct opt_ul2 close_result =
+        search_square(this_val, (ulong2)(x, y), (ulong2)(w, h), spread, img_in, use_luminence);
+    ulong2 closest_px = close_result.point;
+    bool found_candidate = close_result.valid;
+    // bool found_candidate = all(closest_px != (ulong2)(x, y));
+
     // compute distance to pixel
     float this_dist = 0;
-    bool decider = invert ? this_px == false : this_px == true;
+    bool decider = invert ? this_val == false : this_val == true;
     if (found_candidate) {
-        float d = sqrt((float)(cur_closest_d_2));
+        ulong2 delta_to_closest = closest_px - (ulong2)(x, y);
+        float d = sqrt((float)((delta_to_closest.x * delta_to_closest.x) + (delta_to_closest.y * delta_to_closest.y)));
         this_dist = decider ? d : -(d - 1);
     } else {
         this_dist = decider ? INFINITY : -INFINITY;
