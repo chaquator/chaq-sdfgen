@@ -28,34 +28,36 @@ static bool read(int x, int y, read_only image2d_t img, uchar use_luminence) {
 // no other pixel with a smaller distance to this_px (x,y).
 // if none found, return this_px
 
-// basic square search with one early exit optimization
 struct opt_ul2 {
     ulong2 point;
     bool valid;
 };
+
+static void set_bounds(ulong2 point, ulong2 dim, ulong2* lb, ulong2* ub, ulong spread) {
+    // clamp bounds of for loop
+    lb->y = spread > point.y ? 0 : point.y - spread;
+    ub->y = spread > (dim.y - point.y) ? dim.y : point.y + spread;
+    lb->x = spread > point.x ? 0 : point.x - spread;
+    ub->x = spread > (dim.x - point.x) ? dim.x : point.x + spread;
+}
+
+// basic square search with one early exit optimization
 static struct opt_ul2 search_square(bool this_val, ulong2 this_px, ulong2 dim, ulong spread, read_only image2d_t img,
                                     uchar use_luminence) {
-    ulong x = this_px.x;
-    ulong y = this_px.y;
-    ulong w = dim.x;
-    ulong h = dim.y;
-
     ulong2 closest_pixel = this_px;
     ulong closest_d_2 = 0;
     bool found_candidate = false;
 
     // clamp bounds of for loop
+    ulong2 lb, ub;
     ulong sp1 = spread + 1;
-    ulong lb_y = sp1 > y ? 0 : y - sp1;
-    ulong ub_y = sp1 > (h - y) ? h : y + sp1;
-    ulong lb_x = sp1 > x ? 0 : x - sp1;
-    ulong ub_x = sp1 > (w - x) ? w : x + sp1;
+    set_bounds(this_px, dim, &lb, &ub, sp1);
 
     ulong cy, cx;
-    for (cy = lb_y; cy < ub_y; ++cy) {
-        for (cx = lb_x; cx < ub_x; ++cx) {
-            long dx = x - cx;
-            long dy = y - cy;
+    for (cy = lb.y; cy < ub.y; ++cy) {
+        for (cx = lb.x; cx < ub.x; ++cx) {
+            long dx = this_px.x - cx;
+            long dy = this_px.y - cy;
             ulong d_2 = (ulong)(dx * dx) + (ulong)(dy * dy);
             if (d_2 > (sp1 * sp1)) continue;
 
@@ -63,21 +65,14 @@ static struct opt_ul2 search_square(bool this_val, ulong2 this_px, ulong2 dim, u
 
             // find closest pixel not same as this_val
             if (search_val != this_val) {
-                // if (d_2 < closest_d_2 || all(closest_pixel == this_px))
                 if (d_2 < closest_d_2 || !found_candidate) {
                     closest_pixel = (ulong2)(cx, cy);
                     closest_d_2 = d_2;
                     found_candidate = true;
 
-                    /*
-                    // TODO: fix this early exit, also add the optimization for lower bound limiting too
-                    // early exit: if there is a candidate pixel in either negative (upper or leftward) half, then we
-                    // can early exit at the same offset in the positive half
-                    if (all((ulong2)(cx, cy) < this_px)) {
-                        ub_x = x + dx;
-                        ub_y = y + dy;
-                    }
-                    */
+                    // update bounds for early exit
+                    ulong new_bound = floor(sqrt((double)d_2));
+                    set_bounds(this_px, dim, &lb, &ub, new_bound);
                 }
             }
         }
