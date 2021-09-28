@@ -5,8 +5,8 @@ static bool map_read(uchar byte) {
 }
 
 // read value at pixel and map to bool
-static bool read(int x, int y, read_only image2d_t img, uchar use_luminence) {
-    uint4 pixel = read_imageui(img, (int2)(x, y));
+static bool read(int2 point, read_only image2d_t img, uchar use_luminence) {
+    uint4 pixel = read_imageui(img, point);
     uchar p_val = use_luminence ? pixel.x : pixel.w;
     return map_read(p_val);
 }
@@ -54,7 +54,7 @@ static ulong2 search_square(bool this_val, ulong2 this_px, ulong2 dim, ulong spr
             ulong d_2 = (ulong)(dx * dx) + (ulong)(dy * dy);
             if (d_2 > (sp1 * sp1)) continue;
 
-            bool search_val = read(cx, cy, img, use_luminence);
+            bool search_val = read((int2)(cx, cy), img, use_luminence);
 
             // find closest pixel not same as this_val
             if (search_val != this_val) {
@@ -73,6 +73,121 @@ static ulong2 search_square(bool this_val, ulong2 this_px, ulong2 dim, ulong spr
     return closest_pixel;
 }
 
+// explores in an 4-way symmetric triangle originating from this_px
+static ulong2 search_triangle(bool this_val, ulong2 this_px, ulong2 dim, ulong spread, read_only image2d_t img,
+                              uchar use_luminence) {
+    ulong2 closest_px = this_px;
+
+    ulong spread_2 = spread * spread;
+
+    // u - primary direction, v - secondary direction
+    ulong u = 1;
+    ulong v;
+    while ((u * u) <= spread_2) {
+
+#define CHECK_RET(ox, oy)                                                                                              \
+    {                                                                                                                  \
+        if (read(convert_int2(this_px) + (int2)(ox, oy), img, use_luminence) != this_val) {                            \
+            return convert_ulong2(convert_long2(this_px) + (long2)(ox, oy));                                           \
+        }                                                                                                              \
+    }
+
+#define CHECK_BREAK(ox, oy)                                                                                            \
+    {                                                                                                                  \
+        if (read(convert_int2(this_px) + (int2)(ox, oy), img, use_luminence) != this_val) {                            \
+            closest_px = convert_ulong2(convert_long2(this_px) + (long2)(ox, oy));                                     \
+            spread_2 = d_2;                                                                                            \
+            break;                                                                                                     \
+        }                                                                                                              \
+    }
+
+        // test straight ahead on all 4 axes
+        // if candidate found, we can return immediately
+        ulong2 remain = dim - this_px;
+
+        long2 check_ul = this_px >= (ulong2)(u);
+        long2 check_lr = remain >= (ulong2)(u);
+        // left
+        if (check_ul.x) {
+            CHECK_RET(-u, 0);
+        }
+        // up
+        if (check_ul.y) {
+            CHECK_RET(0, -u);
+        }
+        // right
+        if (check_lr.x) {
+            CHECK_RET(u, 0);
+        }
+        // down
+        if (check_lr.y) {
+            CHECK_RET(0, u);
+        }
+
+        v = 1;
+        ulong d_2 = u * u;
+        while (v < u) {
+            d_2 += (v << 1) - 1;
+            if (d_2 > spread_2) break;
+
+            // test +v and -v on all 4 axes
+            // if candidate found, we can limit spread_2 to d_2
+            // left (-x)
+            if (check_ul.x) {
+                // -y
+                if (check_ul.y) {
+                    CHECK_BREAK(-u, -v);
+                }
+                // +y
+                if (check_lr.y) {
+                    CHECK_BREAK(-u, v);
+                }
+            }
+            // up (-y)
+            if (check_ul.y) {
+                // -x
+                if (check_ul.x) {
+                    CHECK_BREAK(-v, -u);
+                }
+                // +x
+                if (check_lr.x) {
+                    CHECK_BREAK(v, -u);
+                }
+            }
+            // right (+x)
+            if (check_lr.x) {
+                // -y
+                if (check_ul.y) {
+                    CHECK_BREAK(u, -v);
+                }
+                // +y
+                if (check_lr.y) {
+                    CHECK_BREAK(u, v);
+                }
+            }
+            // down (+y)
+            if (check_lr.y) {
+                // -x
+                if (check_ul.x) {
+                    CHECK_BREAK(-v, u);
+                }
+                // +x
+                if (check_lr.x) {
+                    CHECK_BREAK(v, u);
+                }
+            }
+
+            ++v;
+        }
+        ++u;
+
+#undef CHECK_BREAK
+#undef CHECK_RET
+    }
+
+    return closest_px;
+}
+
 kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong spread, //
                 uchar use_luminence, uchar invert, uchar asymmetric) {
     size_t w = get_global_size(0);
@@ -81,9 +196,9 @@ kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong 
     // search in spread radius for closest pixel
     ulong x = (ulong)get_global_id(0);
     ulong y = (ulong)get_global_id(1);
-    bool this_val = read(x, y, img_in, use_luminence);
+    bool this_val = read((int2)(x, y), img_in, use_luminence);
 
-    ulong2 closest_px = search_square(this_val, (ulong2)(x, y), (ulong2)(w, h), spread, img_in, use_luminence);
+    ulong2 closest_px = search_triangle(this_val, (ulong2)(x, y), (ulong2)(w, h), spread, img_in, use_luminence);
     bool found_candidate = any(closest_px != (ulong2)(x, y));
 
     // compute distance to pixel
