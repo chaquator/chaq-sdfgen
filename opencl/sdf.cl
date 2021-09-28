@@ -205,7 +205,7 @@ kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong 
     float this_dist = 0;
     bool decider = invert ^ this_val;
     if (found_candidate) {
-        ulong2 delta_to_closest = closest_px - (ulong2)(x, y);
+        long2 delta_to_closest = convert_long2(closest_px) - (long2)(x, y);
         float d = sqrt((float)((delta_to_closest.x * delta_to_closest.x) + (delta_to_closest.y * delta_to_closest.y)));
         this_dist = decider ? d : -(d - 1);
     } else {
