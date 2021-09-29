@@ -422,6 +422,12 @@ int main(int argc, char* argv[]) {
         .nargs(1)
         .default_value(std::string("error"));
 
+    argparse.add_argument("--time")
+        .help("Show kernel execution time on info logging level")
+        .nargs(0)
+        .default_value(false)
+        .implicit_value(true);
+
     argparse.add_argument("-i", "--input")
         .nargs(1)
         .help("Input filename. Specify \"-\" (without the quotation marks) to read from stdin.");
@@ -661,12 +667,17 @@ int main(int argc, char* argv[]) {
     spdlog::trace("Created OpenCL context");
 
     // opencl command queue
+    bool time = argparse["--time"] == true;
     cl_command_queue_properties properties[] = {
         CL_QUEUE_PROPERTIES,
-        CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE,
+        CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE,
         //
         0,
     };
+    if (time) {
+        spdlog::trace("Enabling profiling on command queue to measure timing");
+        properties[1] |= CL_QUEUE_PROFILING_ENABLE;
+    }
     queue = clCreateCommandQueueWithProperties(ctx, device, properties, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error creating OpenCL queue (OpenCL error: {})", err);
@@ -812,9 +823,12 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    err = clSetEventCallback(kernel_evt, CL_COMPLETE, kernel_callback, nullptr);
-    if (err != CL_SUCCESS) {
-        spdlog::error("Failed to set OpenCL kernel callback (OpenCL error: {})", err);
+    if (time) {
+        spdlog::trace("Setting event completion callback for kernel");
+        err = clSetEventCallback(kernel_evt, CL_COMPLETE, kernel_callback, nullptr);
+        if (err != CL_SUCCESS) {
+            spdlog::error("Failed to set OpenCL kernel callback (OpenCL error: {})", err);
+        }
     }
 
     // opencl wait
@@ -848,5 +862,3 @@ int main(int argc, char* argv[]) {
 
     return EXIT_SUCCESS;
 }
-
-// TODO: logging pass, organize pass
