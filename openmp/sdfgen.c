@@ -299,12 +299,6 @@ int main(int argc, char** argv) {
     if (img_byte == NULL) error("img_byte malloc failed.");
     transform_float_to_byte(img_float_outside, img_byte, (size_t)w, (size_t)h, spread, asymmetric);
 
-    /*
-    // TODO: TESTING
-    fwrite(img_byte, w * h, 1, stdout);
-    return 0;
-    */
-
     free(img_float_outside);
 
     // deduce filetype if not specified
