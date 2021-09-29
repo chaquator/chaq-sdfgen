@@ -25,5 +25,3 @@ find_package(argparse CONFIG REQUIRED)
 
 target_link_libraries(chaq_sdfgen_opencl PRIVATE OpenCL::OpenCL spdlog::spdlog fmt::fmt argparse::argparse)
 target_include_directories(chaq_sdfgen_opencl PRIVATE ${CMAKE_SOURCE_DIR}/include)
-
-configure_file(sdf.cl ${CMAKE_CURRENT_BINARY_DIR}/sdf.cl COPYONLY)

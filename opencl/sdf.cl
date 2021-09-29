@@ -1,5 +1,7 @@
-// map pixel byte to bool
-static bool map_read(uchar byte) {
+R"STRING_CL(
+    // map pixel byte to bool
+    static bool
+    map_read(uchar byte) {
     unsigned char threshold = 127;
     return byte > threshold;
 }
@@ -220,3 +222,4 @@ kernel void sdf(read_only image2d_t img_in, write_only image2d_t img_out, ulong 
     uint4 col = (uint4)((uint3)(val), 255);
     write_imageui(img_out, (int2)(x, y), col);
 }
+)STRING_CL"

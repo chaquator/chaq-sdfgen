@@ -23,6 +23,10 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb/stb_image_write.h"
 
+std::string_view sdf_cl{
+#include "sdf.cl"
+};
+
 // different filetypes
 namespace filetype {
 enum filetype {
@@ -593,9 +597,6 @@ int main(int argc, char* argv[]) {
     // load image
     auto image_fut = std::async(open_image, infile);
 
-    // load source content
-    auto source_fut = std::async(get_file_contents, "sdf.cl");
-
     // opencl device
     auto device_arg_opt = argparse.present<std::string>("--device");
     if (device_arg_opt) {
@@ -674,18 +675,9 @@ int main(int argc, char* argv[]) {
     auto_release queue_release{queue, clReleaseCommandQueue};
     spdlog::trace("Created OpenCL command queue");
 
-    // get source string
-    spdlog::trace("Waiting on source string");
-    auto source_opt = source_fut.get();
-    if (!source_opt) {
-        spdlog::critical("Could not find source file.");
-        return EXIT_FAILURE;
-    }
-    const char* src = source_opt->data();
-    const std::size_t len = source_opt->length();
-    spdlog::trace("Got source string");
-
     // opencl source program
+    const char* src = sdf_cl.data();
+    const std::size_t len = sdf_cl.length();
     program = clCreateProgramWithSource(ctx, 1, &src, &len, &err);
     if (err != CL_SUCCESS) {
         spdlog::critical("Error creating OpenCL program (OpenCL error: {})", err);
@@ -806,7 +798,6 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     // kernel execution
-    // TODO: split into granular kernel executions, add callbacks to log completion percentage and time taken stats
     err = clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, work_size, nullptr, 1, &img_write_evt, &kernel_evt);
     if (err != CL_SUCCESS) {
         spdlog::critical("Failed to enqueue kernel execution (OpenCL error: {})", err);
