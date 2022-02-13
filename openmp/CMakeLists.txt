@@ -22,7 +22,7 @@ endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   target_compile_options(chaq_sdfgen PRIVATE /W4 /WX)
 else()
-  target_compile_options(chaq_sdfgen PRIVATE -Wall -Wextra -Wpedantic -flto)
+  target_compile_options(chaq_sdfgen PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 target_include_directories(chaq_sdfgen PRIVATE ${CMAKE_SOURCE_DIR}/include)

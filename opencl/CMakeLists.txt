@@ -13,7 +13,7 @@ set_target_properties(
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   target_compile_options(chaq_sdfgen_opencl PRIVATE /W4 /Wx)
 else()
-  target_compile_options(chaq_sdfgen_opencl PRIVATE -Wall -Wextra -Wpedantic -flto)
+  target_compile_options(chaq_sdfgen_opencl PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 set(SPDLOG_FMT_EXTERNAL)
