@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-add_executable(chaq_sdfgen_vk main.cpp)
+add_executable(chaq_sdfgen_vk main.cpp filetype.cpp)
 
 set_target_properties(
   chaq_sdfgen_vk

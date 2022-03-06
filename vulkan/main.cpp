@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <iostream>
 #include <optional>
@@ -32,6 +33,30 @@ static vk::Device device;
 static vk::Queue queue;
 static vk::CommandPool cmd_pool;
 static vk::CommandBuffer cmd_buffer;
+
+// use a stack of std::functions to execute cleanup dynamically.
+// to not run the risk of the cleanup stack outlasting any global handles and then calling cleanup on them, use
+// std::function to store lambdas that keep their handles as copy captures as opposed to storing plain function
+// pointers.
+struct cleanup_stack {
+    using func_t = std::function<void()>;
+    std::vector<func_t> container;
+
+    template <class FuncT>
+    void push(FuncT&& func_cleanup) {
+        container.emplace_back(std::forward<FuncT>(func_cleanup));
+    }
+
+    ~cleanup_stack() {
+        if (!container.empty()) {
+            spdlog::debug("Cleanning up.");
+            std::for_each(container.crbegin(), container.crend(), [](const func_t& func_cleanup) { func_cleanup(); });
+        } else {
+            spdlog::debug("Cleanup stack is empty. No cleanup to be done.");
+        }
+    }
+};
+cleanup_stack cleanup;
 
 #ifndef NDEBUG
 
@@ -86,6 +111,12 @@ static bool init_debug_messenger(vk::Instance& instance) {
     }
 
     debug_messenger = opt_messenger.value;
+
+    // push cleanup
+    cleanup.push([instance = instance, debug_messenger = debug_messenger, dynamic_dispatch = dynamic_dispatch]() {
+        spdlog::debug("Destroying debug messenger.");
+        instance.destroyDebugUtilsMessengerEXT(debug_messenger, nullptr, dynamic_dispatch);
+    });
 
     return true;
 }
@@ -184,7 +215,7 @@ static bool write_image(std::string_view filename, filetype::filetype file_type,
 }
 
 // define arguments for argparse
-static void define_args(argparse::ArgumentParser argparse) {
+static void define_args(argparse::ArgumentParser& argparse) {
     argparse.add_argument("-f", "--filetype")
         .help("Types are PNG, JPEG, TGA, BMP. Derived by filename if no override given, falls back to PNG if"
               "derivation fails.")
@@ -227,13 +258,18 @@ static void define_args(argparse::ArgumentParser argparse) {
 
     argparse.add_argument("--device")
         .nargs(1)
-        .help("Choose device by name. Use --list-devices to list the device for a platform. Chooses first device "
-              "otherwise.");
+        .help("Choose device by name. Use --list-devices to list all present devices. Chooses first device otherwise.");
+
+#ifdef NDEBUG
+    std::string def_log_level = "error";
+#else
+    std::string def_log_level = "debug";
+#endif
 
     argparse.add_argument("--log-level")
         .help("Log level. Possible values: trace, debug, info, warning, error, critical, off.")
         .nargs(1)
-        .default_value(std::string("error"));
+        .default_value(std::move(def_log_level));
 
     argparse.add_argument("-i", "--input")
         .nargs(1)
@@ -244,6 +280,10 @@ static void define_args(argparse::ArgumentParser argparse) {
 }
 
 // vulkan related functions
+static bool suitable_queue(const vk::QueueFamilyProperties& properties) {
+    return properties.queueCount >= 1 && (bool)(properties.queueFlags & vk::QueueFlagBits::eCompute);
+}
+
 template <class It>
 static std::optional<std::tuple<const vk::PhysicalDevice, std::size_t>>
 get_suitable_device_and_queue_family_idx(It begin, It end) {
@@ -252,10 +292,7 @@ get_suitable_device_and_queue_family_idx(It begin, It end) {
         const auto& device = *start;
 
         const auto family_properties = device.getQueueFamilyProperties();
-        const auto queue_it = std::find_if(
-            family_properties.cbegin(), family_properties.cend(), [](const vk::QueueFamilyProperties& prop) {
-                return prop.queueCount >= 1 && (bool)(prop.queueFlags & vk::QueueFlagBits::eCompute);
-            });
+        const auto queue_it = std::find_if(family_properties.cbegin(), family_properties.cend(), suitable_queue);
         if (queue_it != family_properties.cend()) {
             const auto queue_idx = std::distance(family_properties.cbegin(), queue_it);
             return std::tuple{device, queue_idx};
@@ -290,13 +327,19 @@ static bool init_vk() {
 
     instance = opt_instance.value;
 
+    // push cleanup
+    cleanup.push([instance = instance]() {
+        spdlog::debug("Destroying instance.");
+        instance.destroy();
+    });
+
     return true;
 }
 
-static bool init_logical_device() {
+static bool init_logical_device(const std::optional<std::string>& opt_device_name) {
     spdlog::debug("Getting VkPhysicalDevice list");
 
-    const auto opt_physical_devices = instance.enumeratePhysicalDevices();
+    auto opt_physical_devices = instance.enumeratePhysicalDevices();
 
     if (opt_physical_devices.result != vk::Result::eSuccess) {
         spdlog::error("Failed to get VkPhysicalDevice list! (VkResult: {})",
@@ -304,12 +347,29 @@ static bool init_logical_device() {
         return false;
     }
 
-    const auto& physical_devices = opt_physical_devices.value;
+    auto& physical_devices = opt_physical_devices.value;
 
     spdlog::debug("Searching for suitable VkPhysicalDevice");
 
-    const auto opt_device_queue =
-        get_suitable_device_and_queue_family_idx(physical_devices.cbegin(), physical_devices.cend());
+    auto it_end = physical_devices.end();
+    if (opt_device_name) {
+        const auto& device_name = *opt_device_name;
+
+        spdlog::debug("Filtering for devices with name \"{}\"", device_name);
+        it_end = std::remove_if(physical_devices.begin(), physical_devices.end(),
+                                [&device_name](const vk::PhysicalDevice& cur_device) {
+                                    const std::string_view name = cur_device.getProperties().deviceName;
+                                    const auto find_pos = name.find(device_name);
+                                    return find_pos == std::string_view::npos;
+                                });
+
+        if (it_end == physical_devices.begin()) {
+            spdlog::error("Failed to find device with name \"{}\"", device_name);
+            return false;
+        }
+    }
+
+    const auto opt_device_queue = get_suitable_device_and_queue_family_idx(physical_devices.begin(), it_end);
 
     if (!opt_device_queue) {
         spdlog::error("Failed to find a suitable VkPhysicalDevice! (Requires a queue family with at least 1 queue "
@@ -337,6 +397,12 @@ static bool init_logical_device() {
 
     device = opt_logical_device.value;
 
+    // push cleanup
+    cleanup.push([device = device]() {
+        spdlog::debug("Destroying device.");
+        device.destroy();
+    });
+
     return true;
 }
 
@@ -352,6 +418,12 @@ static bool init_command_pool() {
     }
 
     cmd_pool = opt_cmd_pool.value;
+
+    // push cleanup
+    cleanup.push([device = device, cmd_pool = cmd_pool]() {
+        spdlog::debug("Destroying command pool.");
+        device.destroyCommandPool(cmd_pool);
+    });
 
     return true;
 }
@@ -369,27 +441,20 @@ static bool init_command_buffer() {
 
     cmd_buffer = opt_cmd_buffer.value.front();
 
+    // push cleanup
+    cleanup.push([device = device, cmd_pool = cmd_pool, cmd_buffer = cmd_buffer]() {
+        spdlog::debug("Freeing command buffer.");
+        device.freeCommandBuffers(cmd_pool, {cmd_buffer});
+    });
+
     return true;
-}
-
-static void destroy_vk() {
-    spdlog::debug("Cleaning up resources");
-
-#ifndef NDEBUG
-    instance.destroyDebugUtilsMessengerEXT(debug_messenger, nullptr, dynamic_dispatch);
-#endif
-
-    device.freeCommandBuffers(cmd_pool, {cmd_buffer});
-    device.destroyCommandPool(cmd_pool);
-    device.destroy();
-    instance.destroy();
 }
 
 int main(int argc, char** argv) {
     spdlog::set_level(spdlog::level::critical);
 
     // argument processing
-    argparse::ArgumentParser argparse(argv[0], "2.0");
+    argparse::ArgumentParser argparse(argv[0]);
 
     define_args(argparse);
 
@@ -414,21 +479,18 @@ int main(int argc, char** argv) {
     const auto use_luminence = argparse["--luminence"] == true;
     const auto invert = argparse["--invert"] == true;
 
-    // device name
-    const auto opt_device_name = argparse.present<std::string>("--device");
-    // TODO: pick device by name when specified
-
     // input
     const auto opt_input = argparse.present<std::string>("--input");
-    if (!opt_input) {
+
+    // list devices
+    const auto list_devices = argparse["--list-devices"] == true;
+
+    // input
+    if (!opt_input && !list_devices) {
         spdlog::critical("Input file is required.");
         std::cout << argparse;
         return EXIT_FAILURE;
     }
-    const auto infile = *opt_input;
-    const auto fut_opt_image = std::async(open_image, infile);
-
-    // output (filename, filetype, and quality)
 
     // start with vk business
     if (!init_vk()) {
@@ -443,11 +505,31 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    // list-devices
-    const auto list_devices = argparse["--list-devices"] == true;
-    // TODO: list devices when specified
+    // if list-devices is specified, list physical devices and exit
+    if (list_devices) {
+        const auto opt_physical_devices = instance.enumeratePhysicalDevices();
+        if (opt_physical_devices.result != vk::Result::eSuccess) {
+            spdlog::critical("Failed to get VkPhysicalDevice list! (VkResult: {})",
+                             vk::to_string(opt_physical_devices.result));
+            return EXIT_FAILURE;
+        }
 
-    if (!init_logical_device()) {
+        const auto physical_devices = opt_physical_devices.value;
+
+        for (const auto& cur_physical_device : physical_devices) {
+            std::cout << cur_physical_device.getProperties().deviceName.data() << '\n';
+        }
+
+        return EXIT_SUCCESS;
+    }
+
+    // can begin to load image now that no other non-fatal early-exits will appear
+    const auto infile = *opt_input;
+    const auto fut_opt_image = std::async(open_image, infile);
+
+    // device name
+    const auto opt_device_name = argparse.present<std::string>("--device");
+    if (!init_logical_device(opt_device_name)) {
         spdlog::critical("Failed to init VkDevice");
         return EXIT_FAILURE;
     }
@@ -466,14 +548,14 @@ int main(int argc, char** argv) {
 
     // get fut_opt_image whenever necessary
 
-    // Destroy VK
-    destroy_vk();
+    // more vk business goes here
+
+    // output (filename, filetype, and quality)
 
     return EXIT_SUCCESS;
 }
 
 // TODO:
-// - either use vk raii header or add cleanup stack construct
 // - setup vk memory (selecting right type, etc, creating views or whatever)
 // - compute pipeline
 // - descriptor sets
